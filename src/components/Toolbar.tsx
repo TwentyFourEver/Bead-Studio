@@ -71,6 +71,16 @@ export function Toolbar({
               <span>Seleccionar</span>
               <kbd>V</kbd>
             </button>
+            <button
+              type="button"
+              className={`tool-button pan-tool-button ${tool === 'pan' ? 'is-active' : ''}`}
+              onClick={() => onToolChange('pan')}
+              aria-pressed={tool === 'pan'}
+            >
+              <span className="tool-icon" aria-hidden="true">✋</span>
+              <span>Mover</span>
+              <kbd>H</kbd>
+            </button>
           </div>
         </section>
 

@@ -493,7 +493,8 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       canvas.setPointerCapture(event.pointerId)
       const rect = canvas.getBoundingClientRect()
       const world = screenToWorld(event.clientX, event.clientY, rect, viewRef.current)
-      const shouldPan = event.button === 1 || (spaceHeld && event.button === 0)
+      const shouldPan =
+        event.button === 1 || (event.button === 0 && (spaceHeld || tool === 'pan'))
       const eraseOverride = event.button === 2
       const traceSize = traceImage ? getTraceImageSize(traceImage) : null
       const shouldMoveTrace =
@@ -743,7 +744,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
 
     const cursor = isPanning || isMovingSelection
       ? 'grabbing'
-      : spaceHeld
+      : spaceHeld || tool === 'pan'
         ? 'grab'
         : tool === 'erase'
           ? 'cell'

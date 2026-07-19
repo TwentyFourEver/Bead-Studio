@@ -113,6 +113,7 @@ function App() {
       if (event.key.toLowerCase() === 'b') setTool('paint')
       if (event.key.toLowerCase() === 'e') setTool('erase')
       if (event.key.toLowerCase() === 'v') setTool('select')
+      if (event.key.toLowerCase() === 'h') setTool('pan')
       if (event.key.toLowerCase() === 't' && hasTraceImage && referenceMode === 'trace') {
         setTool('trace')
       }
@@ -348,7 +349,7 @@ function App() {
               />
             )}
             <div className="canvas-hint">
-              <span><kbd>Espacio</kbd> + arrastrar para mover</span>
+              <span><kbd>H</kbd> para mover</span>
               <span className="hint-divider" />
               <span>Rueda para zoom</span>
             </div>

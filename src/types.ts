@@ -1,4 +1,4 @@
-export type ToolMode = 'paint' | 'erase' | 'select' | 'trace'
+export type ToolMode = 'paint' | 'erase' | 'select' | 'pan' | 'trace'
 export type MirrorMode = 'none' | 'vertical' | 'horizontal' | 'both'
 export type BeadOrientation = 'vertical' | 'horizontal'
 export type BackgroundMode = 'transparent' | 'solid'
