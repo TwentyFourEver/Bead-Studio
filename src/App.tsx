@@ -5,6 +5,7 @@ import { FloatingReference } from './components/FloatingReference'
 import { Toolbar } from './components/Toolbar'
 import { clampDimension, getPatternSize } from './lib/geometry'
 import { exportPatternPng } from './lib/exportPattern'
+import { downloadProjectFile, parseProjectFile } from './lib/projectFile'
 import {
   loadPattern,
   moveCells,
@@ -13,6 +14,7 @@ import {
   savePattern,
 } from './lib/patternState'
 import type {
+  BeadStudioProject,
   MirrorMode,
   PatternDocument,
   ReferenceMode,
@@ -22,6 +24,7 @@ import type {
 
 function App() {
   const [document, setDocument] = useState<PatternDocument>(() => loadPattern())
+  const [projectName, setProjectName] = useState('Patrón sin título')
   const [tool, setTool] = useState<ToolMode>('paint')
   const [color, setColor] = useState('#14b8a6')
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none')
@@ -57,6 +60,57 @@ function App() {
     const timer = window.setTimeout(() => setNotice(null), 3400)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  const handleSaveProject = () => {
+    const name = projectName.trim() || 'Patrón sin título'
+    const project: BeadStudioProject = {
+      format: 'bead-studio-project',
+      version: 1,
+      name,
+      document,
+      editor: {
+        color,
+        mirrorMode,
+        referenceMode,
+        traceImage,
+      },
+    }
+
+    try {
+      downloadProjectFile(project)
+      if (name !== projectName) setProjectName(name)
+      setNotice('Proyecto guardado. Podrás abrirlo y seguir pintando.')
+    } catch {
+      setNotice('No fue posible guardar el proyecto.')
+    }
+  }
+
+  const handleOpenProject = async (file: File) => {
+    if (file.size > 35 * 1024 * 1024) {
+      setNotice('El proyecto es demasiado grande para abrirlo.')
+      return
+    }
+
+    try {
+      const project = parseProjectFile(await file.text())
+      documentRef.current = project.document
+      strokeSnapshotRef.current = null
+      setDocument(project.document)
+      setProjectName(project.name)
+      setDraftRows(project.document.rows)
+      setDraftColumns(project.document.columns)
+      setColor(project.editor.color)
+      setMirrorMode(project.editor.mirrorMode)
+      setReferenceMode(project.editor.traceImage ? project.editor.referenceMode : 'floating')
+      setTraceImage(project.editor.traceImage)
+      setTool('paint')
+      setCellHistory([])
+      window.requestAnimationFrame(() => canvasRef.current?.fit())
+      setNotice(`Proyecto “${project.name}” abierto. Ya puedes seguir pintando.`)
+    } catch {
+      setNotice('No se pudo abrir: el archivo no es un proyecto válido de Bead Studio.')
+    }
+  }
 
   const handlePaint = useCallback(
     (positions: Array<[number, number]>, paintColor: string | null) => {
@@ -291,6 +345,8 @@ function App() {
             setColor(nextColor)
             setTool('paint')
           }}
+          onSaveProject={handleSaveProject}
+          onOpenProject={handleOpenProject}
           onExport={() => exportPatternPng(document)}
           onClear={clearPattern}
         />
@@ -298,7 +354,14 @@ function App() {
         <section className="canvas-area" aria-label="Área de trabajo">
           <div className="canvas-topbar">
             <div className="document-info">
-              <span className="document-name">Patrón sin título</span>
+              <input
+                className="document-name"
+                value={projectName}
+                maxLength={120}
+                onChange={(event) => setProjectName(event.target.value)}
+                aria-label="Nombre del proyecto"
+                title="Nombre del proyecto"
+              />
               <span className="document-meta">{document.columns} × {document.rows}</span>
             </div>
             <button

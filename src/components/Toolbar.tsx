@@ -1,5 +1,5 @@
 import type { ToolMode } from '../types'
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 
 const PALETTE = [
   '#111827',
@@ -19,6 +19,8 @@ interface ToolbarProps {
   onToolChange: (tool: ToolMode) => void
   color: string
   onColorChange: (color: string) => void
+  onSaveProject: () => void
+  onOpenProject: (file: File) => void
   onExport: () => void
   onClear: () => void
 }
@@ -32,9 +34,13 @@ export function Toolbar({
   onToolChange,
   color,
   onColorChange,
+  onSaveProject,
+  onOpenProject,
   onExport,
   onClear,
 }: ToolbarProps) {
+  const projectInputRef = useRef<HTMLInputElement>(null)
+
   return (
     <aside className="tool-panel">
       <div className="tool-panel-scroll">
@@ -114,6 +120,32 @@ export function Toolbar({
       </div>
 
       <div className="panel-actions">
+        <div className="project-action-grid">
+          <button type="button" className="secondary-button project-button" onClick={onSaveProject}>
+            <span aria-hidden="true">⇩</span>
+            Guardar proyecto
+          </button>
+          <button
+            type="button"
+            className="secondary-button project-button project-open-button"
+            onClick={() => projectInputRef.current?.click()}
+          >
+            <span aria-hidden="true">⇧</span>
+            Abrir proyecto
+          </button>
+          <input
+            ref={projectInputRef}
+            className="project-file-input"
+            type="file"
+            accept=".beadstudio,application/json"
+            tabIndex={-1}
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) onOpenProject(file)
+              event.currentTarget.value = ''
+            }}
+          />
+        </div>
         <button type="button" className="primary-button" onClick={onExport}>
           <span aria-hidden="true">⇩</span>
           Exportar PNG

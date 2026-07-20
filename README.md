@@ -32,4 +32,5 @@ La compilación de producción se genera en `dist/`.
 - Paneo: barra espaciadora más arrastre, o arrastre con el botón central.
 - Simetría: lateral, arriba/abajo o ambos ejes.
 - Referencia: carga una imagen en una ventana flotante, movible y redimensionable, para verla mientras dibujas. Desde el mismo menú puedes cambiar al modo Calcado, ajustar opacidad, tamaño y posición, o arrastrarla sobre el lienzo con `T`. La referencia no se incluye en el PNG exportado.
+- Proyectos: usa **Guardar proyecto** para descargar un archivo `.beadstudio`. **Abrir proyecto** restaura las cuentas, dimensiones, fondo, simetría, color activo y referencia para poder seguir editando.
 - Exportación: PNG transparente o con fondo de color.

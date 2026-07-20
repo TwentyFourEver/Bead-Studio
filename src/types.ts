@@ -44,6 +44,19 @@ export interface TraceImage {
   visible: boolean
 }
 
+export interface BeadStudioProject {
+  format: 'bead-studio-project'
+  version: 1
+  name: string
+  document: PatternDocument
+  editor: {
+    color: string
+    mirrorMode: MirrorMode
+    referenceMode: ReferenceMode
+    traceImage: TraceImage | null
+  }
+}
+
 export function getTraceImageSize(trace: TraceImage) {
   const scale = trace.baseScale * (trace.scalePercent / 100)
   return {

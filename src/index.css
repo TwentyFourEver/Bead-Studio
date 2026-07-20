@@ -950,6 +950,39 @@ kbd {
   border-top: 1px solid #dcd5ce;
 }
 
+.project-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.project-button {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.project-button span {
+  color: #9b4a32;
+  font-size: 15px;
+}
+
+.project-open-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.project-file-input {
+  display: none;
+}
+
 .primary-button {
   display: flex;
   gap: 9px;
@@ -1005,12 +1038,24 @@ kbd {
 }
 
 .document-name {
+  width: min(210px, 28vw);
+  min-width: 80px;
   overflow: hidden;
+  padding: 4px 5px;
   color: #4f4944;
   font-size: 12px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.document-name:hover,
+.document-name:focus {
+  background: #fff;
+  border-color: #d7d0c9;
 }
 
 .document-meta {
@@ -1423,8 +1468,8 @@ kbd {
 
   .panel-actions {
     display: flex;
-    width: 142px;
-    min-width: 142px;
+    width: 200px;
+    min-width: 200px;
     flex-direction: column;
     justify-content: center;
     gap: 8px;
@@ -1432,6 +1477,8 @@ kbd {
   }
 
   .primary-button { min-height: 52px; }
+  .project-action-grid { width: 100%; margin-bottom: 0; }
+  .project-button { min-height: 37px; font-size: 9px; }
   .clear-button {
     min-height: 42px;
     margin-top: 0;
