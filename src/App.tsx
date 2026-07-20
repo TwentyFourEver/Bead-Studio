@@ -3,8 +3,20 @@ import { PatternCanvas, type PatternCanvasHandle } from './components/PatternCan
 import { HeaderControls } from './components/HeaderControls'
 import { FloatingReference } from './components/FloatingReference'
 import { Toolbar } from './components/Toolbar'
-import { clampDimension, getPatternSize } from './lib/geometry'
+import {
+  beadCountToGridDimension,
+  clampBeadCount,
+  getPatternSize,
+  gridDimensionToBeadCount,
+} from './lib/geometry'
 import { exportPatternPng } from './lib/exportPattern'
+import {
+  createCellHistory,
+  recordCellChange,
+  redoCellChange,
+  undoCellChange,
+} from './lib/cellHistory'
+import { generateAutomaticGuide } from './lib/guideNumbering'
 import { downloadProjectFile, parseProjectFile } from './lib/projectFile'
 import {
   loadPattern,
@@ -16,11 +28,21 @@ import {
 import type {
   BeadStudioProject,
   MirrorMode,
+  NumberingMode,
   PatternDocument,
   ReferenceMode,
   ToolMode,
   TraceImage,
 } from './types'
+
+const TOOL_LABELS: Record<ToolMode, string> = {
+  paint: 'Pincel',
+  erase: 'Borrador',
+  select: 'Selección',
+  pan: 'Mover lienzo',
+  trace: 'Mover referencia',
+  number: 'Numerar pasos',
+}
 
 function App() {
   const [document, setDocument] = useState<PatternDocument>(() => loadPattern())
@@ -28,17 +50,51 @@ function App() {
   const [tool, setTool] = useState<ToolMode>('paint')
   const [color, setColor] = useState('#14b8a6')
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none')
-  const [draftRows, setDraftRows] = useState(document.rows)
-  const [draftColumns, setDraftColumns] = useState(document.columns)
+  const [draftRows, setDraftRows] = useState(() => gridDimensionToBeadCount(document.rows))
+  const [draftColumns, setDraftColumns] = useState(() =>
+    gridDimensionToBeadCount(document.columns),
+  )
   const [zoomPercent, setZoomPercent] = useState(100)
   const [notice, setNotice] = useState<string | null>(null)
-  const [cellHistory, setCellHistory] = useState<Array<Record<string, string>>>([])
+  const [historyAvailability, setHistoryAvailability] = useState({
+    canUndo: false,
+    canRedo: false,
+  })
   const [traceImage, setTraceImage] = useState<TraceImage | null>(null)
   const [referenceMode, setReferenceMode] = useState<ReferenceMode>('floating')
+  const [showGuideSteps, setShowGuideSteps] = useState(true)
+  const [numberingMode, setNumberingMode] = useState<NumberingMode>('manual')
   const hasTraceImage = traceImage !== null
+  const guideStepCount = document.guideSteps?.length ?? 0
+  const paintedBeadCount = Object.keys(document.cells).length
   const canvasRef = useRef<PatternCanvasHandle>(null)
   const documentRef = useRef(document)
   const strokeSnapshotRef = useRef<Record<string, string> | null>(null)
+  const cellHistoryRef = useRef(createCellHistory())
+
+  const syncHistoryAvailability = useCallback(() => {
+    const next = {
+      canUndo: cellHistoryRef.current.past.length > 0,
+      canRedo: cellHistoryRef.current.future.length > 0,
+    }
+    setHistoryAvailability((current) =>
+      current.canUndo === next.canUndo && current.canRedo === next.canRedo ? current : next,
+    )
+  }, [])
+
+  const resetCellHistory = useCallback(() => {
+    cellHistoryRef.current = createCellHistory()
+    strokeSnapshotRef.current = null
+    syncHistoryAvailability()
+  }, [syncHistoryAvailability])
+
+  const rememberCellChange = useCallback(
+    (previousCells: Record<string, string>) => {
+      cellHistoryRef.current = recordCellChange(cellHistoryRef.current, previousCells)
+      syncHistoryAvailability()
+    },
+    [syncHistoryAvailability],
+  )
 
   useEffect(() => {
     documentRef.current = document
@@ -73,6 +129,7 @@ function App() {
         mirrorMode,
         referenceMode,
         traceImage,
+        showGuideSteps,
       },
     }
 
@@ -97,14 +154,15 @@ function App() {
       strokeSnapshotRef.current = null
       setDocument(project.document)
       setProjectName(project.name)
-      setDraftRows(project.document.rows)
-      setDraftColumns(project.document.columns)
+      setDraftRows(gridDimensionToBeadCount(project.document.rows))
+      setDraftColumns(gridDimensionToBeadCount(project.document.columns))
       setColor(project.editor.color)
       setMirrorMode(project.editor.mirrorMode)
       setReferenceMode(project.editor.traceImage ? project.editor.referenceMode : 'floating')
       setTraceImage(project.editor.traceImage)
+      setShowGuideSteps(project.editor.showGuideSteps ?? true)
       setTool('paint')
-      setCellHistory([])
+      resetCellHistory()
       window.requestAnimationFrame(() => canvasRef.current?.fit())
       setNotice(`Proyecto “${project.name}” abierto. Ya puedes seguir pintando.`)
     } catch {
@@ -129,8 +187,8 @@ function App() {
     const snapshot = strokeSnapshotRef.current
     strokeSnapshotRef.current = null
     if (!snapshot || snapshot === documentRef.current.cells) return
-    setCellHistory((current) => [...current.slice(-49), snapshot])
-  }, [])
+    rememberCellChange(snapshot)
+  }, [rememberCellChange])
 
   const handleMoveSelection = useCallback(
     (selectedKeys: string[], rowDelta: number, columnDelta: number) => {
@@ -142,13 +200,26 @@ function App() {
   )
 
   const handleUndo = useCallback(() => {
-    const previousCells = cellHistory.at(-1)
-    if (!previousCells) return
-    const next = { ...documentRef.current, cells: previousCells }
+    const transition = undoCellChange(cellHistoryRef.current, documentRef.current.cells)
+    if (!transition) return
+    cellHistoryRef.current = transition.history
+    strokeSnapshotRef.current = null
+    const next = { ...documentRef.current, cells: transition.cells }
     documentRef.current = next
     setDocument(next)
-    setCellHistory(cellHistory.slice(0, -1))
-  }, [cellHistory])
+    syncHistoryAvailability()
+  }, [syncHistoryAvailability])
+
+  const handleRedo = useCallback(() => {
+    const transition = redoCellChange(cellHistoryRef.current, documentRef.current.cells)
+    if (!transition) return
+    cellHistoryRef.current = transition.history
+    strokeSnapshotRef.current = null
+    const next = { ...documentRef.current, cells: transition.cells }
+    documentRef.current = next
+    setDocument(next)
+    syncHistoryAvailability()
+  }, [syncHistoryAvailability])
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -159,15 +230,24 @@ function App() {
       ) {
         return
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        handleUndo()
-        return
+      if (event.ctrlKey || event.metaKey) {
+        const key = event.key.toLowerCase()
+        if ((key === 'z' && event.shiftKey) || key === 'y') {
+          event.preventDefault()
+          handleRedo()
+          return
+        }
+        if (key === 'z') {
+          event.preventDefault()
+          handleUndo()
+          return
+        }
       }
       if (event.key.toLowerCase() === 'b') setTool('paint')
       if (event.key.toLowerCase() === 'e') setTool('erase')
       if (event.key.toLowerCase() === 'v') setTool('select')
       if (event.key.toLowerCase() === 'h') setTool('pan')
+      if (event.key.toLowerCase() === 'n') setTool('number')
       if (event.key.toLowerCase() === 't' && hasTraceImage && referenceMode === 'trace') {
         setTool('trace')
       }
@@ -176,7 +256,7 @@ function App() {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [handleUndo, hasTraceImage, referenceMode])
+  }, [handleRedo, handleUndo, hasTraceImage, referenceMode])
 
   const enforceMirrorDimensions = useCallback(
     (base: PatternDocument, mode: MirrorMode) => {
@@ -195,29 +275,39 @@ function App() {
     setMirrorMode(mode)
     const adjusted = enforceMirrorDimensions(document, mode)
     if (adjusted.rows !== document.rows || adjusted.columns !== document.columns) {
-      setNotice(`Tamaño ajustado a ${adjusted.columns} × ${adjusted.rows} para una simetría exacta.`)
-      setCellHistory([])
+      setNotice(
+        `Tamaño ajustado a ${gridDimensionToBeadCount(adjusted.columns)} × ${gridDimensionToBeadCount(adjusted.rows)} para una simetría exacta.`,
+      )
+      resetCellHistory()
     }
     setDocument(adjusted)
-    setDraftRows(adjusted.rows)
-    setDraftColumns(adjusted.columns)
+    setDraftRows(gridDimensionToBeadCount(adjusted.rows))
+    setDraftColumns(gridDimensionToBeadCount(adjusted.columns))
   }
 
   const handleApplyDimensions = () => {
-    let rows = clampDimension(Number.isFinite(draftRows) ? draftRows : document.rows)
-    let columns = clampDimension(Number.isFinite(draftColumns) ? draftColumns : document.columns)
-    const requestedRows = rows
-    const requestedColumns = columns
+    const requestedRows = clampBeadCount(
+      Number.isFinite(draftRows) ? draftRows : gridDimensionToBeadCount(document.rows),
+    )
+    const requestedColumns = clampBeadCount(
+      Number.isFinite(draftColumns) ? draftColumns : gridDimensionToBeadCount(document.columns),
+    )
+    let rows = beadCountToGridDimension(requestedRows)
+    let columns = beadCountToGridDimension(requestedColumns)
     if ((mirrorMode === 'horizontal' || mirrorMode === 'both') && rows % 2 === 0) rows += 1
     if ((mirrorMode === 'vertical' || mirrorMode === 'both') && columns % 2 === 0) columns += 1
     setDocument((current) => resizePattern(current, rows, columns))
-    if (rows !== document.rows || columns !== document.columns) setCellHistory([])
-    setDraftRows(rows)
-    setDraftColumns(columns)
-    if (rows !== requestedRows || columns !== requestedColumns) {
-      setNotice(`Se usó ${columns} × ${rows} para mantener las parejas del espejo.`)
+    if (rows !== document.rows || columns !== document.columns) {
+      resetCellHistory()
+    }
+    const appliedRows = gridDimensionToBeadCount(rows)
+    const appliedColumns = gridDimensionToBeadCount(columns)
+    setDraftRows(appliedRows)
+    setDraftColumns(appliedColumns)
+    if (appliedRows !== requestedRows || appliedColumns !== requestedColumns) {
+      setNotice(`Se usó ${appliedColumns} × ${appliedRows} para mantener las parejas del espejo.`)
     } else {
-      setNotice(`Lienzo actualizado a ${columns} × ${rows}.`)
+      setNotice(`Lienzo actualizado a ${requestedColumns} × ${requestedRows}.`)
     }
   }
 
@@ -229,11 +319,71 @@ function App() {
   }
 
   const clearPattern = () => {
-    if (!Object.keys(document.cells).length) return
-    if (!window.confirm('¿Quieres borrar todos los colores del patrón?')) return
-    setCellHistory((current) => [...current.slice(-49), document.cells])
-    setDocument((current) => ({ ...current, cells: {} }))
+    if (!Object.keys(document.cells).length && !guideStepCount) return
+    if (!window.confirm('¿Quieres borrar todos los colores y números del patrón?')) return
+    rememberCellChange(document.cells)
+    setDocument((current) => {
+      const next = { ...current, cells: {}, guideSteps: [] }
+      documentRef.current = next
+      return next
+    })
     setNotice('El patrón quedó limpio.')
+  }
+
+  const handleGuideStepToggle = useCallback((row: number, column: number) => {
+    setShowGuideSteps(true)
+    setDocument((current) => {
+      const steps = current.guideSteps ?? []
+      const existingIndex = steps.findIndex(
+        (step) => step.row === row && step.column === column,
+      )
+      const guideSteps = existingIndex >= 0
+        ? steps.filter((_, index) => index !== existingIndex)
+        : [...steps, { row, column }]
+      const next = { ...current, guideSteps }
+      documentRef.current = next
+      return next
+    })
+  }, [])
+
+  const clearGuideSteps = () => {
+    if (!guideStepCount) return
+    if (!window.confirm('¿Quieres borrar toda la numeración del recorrido?')) return
+    setDocument((current) => {
+      const next = { ...current, guideSteps: [] }
+      documentRef.current = next
+      return next
+    })
+    setNotice('Guía de tejido eliminada.')
+  }
+
+  const generateGuideSteps = () => {
+    const current = documentRef.current
+    if (
+      (current.guideSteps?.length ?? 0) > 0 &&
+      !window.confirm('¿Quieres reemplazar la numeración actual por un recorrido automático?')
+    ) {
+      return
+    }
+
+    const result = generateAutomaticGuide(current)
+    if (!result.steps.length) {
+      setNotice('Pinta las cuatro cuentas de al menos una cruz para generar el recorrido.')
+      return
+    }
+
+    const next = { ...current, guideSteps: result.steps }
+    documentRef.current = next
+    setDocument(next)
+    setShowGuideSteps(true)
+
+    if (result.componentCount > 1) {
+      setNotice(
+        `Se numeraron ${result.steps.length} pasos en ${result.componentCount} secciones. Revisa los saltos en modo manual.`,
+      )
+    } else {
+      setNotice(`Numeración horizontal generada con ${result.steps.length} pasos.`)
+    }
   }
 
   const handleTraceUpload = (file: File) => {
@@ -303,15 +453,31 @@ function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-mark" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="brand-copy">
-          <h1>Bead Studio</h1>
-          <p>Editor de patrones</p>
+        <div className="app-titlebar">
+          <div className="brand-lockup">
+            <div className="brand-mark" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+              <span />
+            </div>
+            <div className="brand-copy">
+              <h1>Bead Studio</h1>
+              <p>Editor de patrones</p>
+            </div>
+          </div>
+          <div className="titlebar-context" aria-label="Proyecto actual">
+            <span className="workspace-indicator" aria-hidden="true" />
+            <input
+              className="titlebar-project-name"
+              value={projectName}
+              maxLength={120}
+              onChange={(event) => setProjectName(event.target.value)}
+              aria-label="Nombre del proyecto"
+              title="Nombre del proyecto"
+            />
+          </div>
+          <div className="titlebar-version">Patrón de cuentas</div>
         </div>
         <HeaderControls
           mirrorMode={mirrorMode}
@@ -347,34 +513,53 @@ function App() {
           }}
           onSaveProject={handleSaveProject}
           onOpenProject={handleOpenProject}
-          onExport={() => exportPatternPng(document)}
+          onExport={() => exportPatternPng(document, showGuideSteps)}
           onClear={clearPattern}
+          guideStepCount={guideStepCount}
+          numberingMode={numberingMode}
+          onNumberingModeChange={setNumberingMode}
+          onGenerateGuide={generateGuideSteps}
+          showGuideSteps={showGuideSteps}
+          onGuideVisibilityChange={setShowGuideSteps}
+          onClearGuide={clearGuideSteps}
         />
 
         <section className="canvas-area" aria-label="Área de trabajo">
           <div className="canvas-topbar">
-            <div className="document-info">
-              <input
-                className="document-name"
-                value={projectName}
-                maxLength={120}
-                onChange={(event) => setProjectName(event.target.value)}
-                aria-label="Nombre del proyecto"
-                title="Nombre del proyecto"
-              />
-              <span className="document-meta">{document.columns} × {document.rows}</span>
+            <div className="canvas-command-group" aria-label="Edición del documento">
+              <span className="document-meta">
+                {gridDimensionToBeadCount(document.columns)} ×{' '}
+                {gridDimensionToBeadCount(document.rows)}
+              </span>
+              <div className="history-controls" role="group" aria-label="Historial de edición">
+                <button
+                  type="button"
+                  className="history-button undo-button"
+                  onClick={handleUndo}
+                  disabled={!historyAvailability.canUndo}
+                  aria-label="Deshacer"
+                  title="Deshacer último trazo (Ctrl+Z)"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M8 5 4 9l4 4" />
+                    <path d="M5 9h6a5 5 0 0 1 5 5" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="history-button redo-button"
+                  onClick={handleRedo}
+                  disabled={!historyAvailability.canRedo}
+                  aria-label="Rehacer"
+                  title="Rehacer último trazo (Ctrl+Y o Ctrl+Mayús+Z)"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="m12 5 4 4-4 4" />
+                    <path d="M15 9H9a5 5 0 0 0-5 5" />
+                  </svg>
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              className="undo-button"
-              onClick={handleUndo}
-              disabled={!cellHistory.length}
-              title="Deshacer último trazo (Ctrl+Z)"
-            >
-              <span aria-hidden="true">↶</span>
-              Deshacer
-              <kbd>Ctrl Z</kbd>
-            </button>
             <div className="zoom-controls" aria-label="Controles de zoom">
               <button type="button" onClick={() => canvasRef.current?.zoomOut()} aria-label="Alejar">−</button>
               <span>{zoomPercent}%</span>
@@ -400,6 +585,9 @@ function App() {
               }}
               onPaint={handlePaint}
               onMoveSelection={handleMoveSelection}
+              onGuideStepToggle={handleGuideStepToggle}
+              numberingMode={numberingMode}
+              showGuideSteps={showGuideSteps}
               onStrokeStart={handleStrokeStart}
               onStrokeEnd={handleStrokeEnd}
               onZoomChange={setZoomPercent}
@@ -417,6 +605,19 @@ function App() {
               <span>Rueda para zoom</span>
             </div>
           </div>
+          <footer className="canvas-statusbar" aria-label="Estado del documento">
+            <span className="status-tool">
+              <span className="status-tool-dot" aria-hidden="true" />
+              {TOOL_LABELS[tool]}
+            </span>
+            <span>{paintedBeadCount} {paintedBeadCount === 1 ? 'cuenta pintada' : 'cuentas pintadas'}</span>
+            {guideStepCount > 0 && <span>{guideStepCount} pasos</span>}
+            <span className="statusbar-spacer" />
+            <span>{zoomPercent}%</span>
+            <span>
+              {gridDimensionToBeadCount(document.columns)} × {gridDimensionToBeadCount(document.rows)}
+            </span>
+          </footer>
         </section>
       </div>
 

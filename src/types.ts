@@ -1,4 +1,5 @@
-export type ToolMode = 'paint' | 'erase' | 'select' | 'pan' | 'trace'
+export type ToolMode = 'paint' | 'erase' | 'select' | 'pan' | 'trace' | 'number'
+export type NumberingMode = 'manual' | 'automatic'
 export type MirrorMode = 'none' | 'vertical' | 'horizontal' | 'both'
 export type BeadOrientation = 'vertical' | 'horizontal'
 export type BackgroundMode = 'transparent' | 'solid'
@@ -9,10 +10,16 @@ export interface PatternDocument {
   rows: number
   columns: number
   cells: Record<string, string>
+  guideSteps?: GuideStep[]
   background: {
     mode: BackgroundMode
     color: string
   }
+}
+
+export interface GuideStep {
+  row: number
+  column: number
 }
 
 export interface BeadGeometry {
@@ -54,6 +61,7 @@ export interface BeadStudioProject {
     mirrorMode: MirrorMode
     referenceMode: ReferenceMode
     traceImage: TraceImage | null
+    showGuideSteps?: boolean
   }
 }
 

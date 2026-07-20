@@ -17,13 +17,15 @@ import {
   getMirroredCells,
   getPatternSize,
   hitTestBead,
+  hitTestGuidePoint,
   parseBeadKey,
   screenToWorld,
 } from '../lib/geometry'
-import { drawPatternContent } from '../lib/exportPattern'
+import { drawGuideSteps, drawPatternContent } from '../lib/exportPattern'
 import {
   getTraceImageSize,
   type MirrorMode,
+  type NumberingMode,
   type PatternDocument,
   type ToolMode,
   type TraceImage,
@@ -45,6 +47,9 @@ interface PatternCanvasProps {
   onTraceMove: (deltaX: number, deltaY: number) => void
   onPaint: (positions: Array<[number, number]>, color: string | null) => void
   onMoveSelection: (selectedKeys: string[], rowDelta: number, columnDelta: number) => void
+  onGuideStepToggle: (row: number, column: number) => void
+  numberingMode: NumberingMode
+  showGuideSteps: boolean
   onStrokeStart: () => void
   onStrokeEnd: () => void
   onZoomChange: (percent: number) => void
@@ -123,6 +128,9 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       onTraceMove,
       onPaint,
       onMoveSelection,
+      onGuideStepToggle,
+      numberingMode,
+      showGuideSteps,
       onStrokeStart,
       onStrokeEnd,
       onZoomChange,
@@ -292,6 +300,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       context.lineWidth = 1 / view.scale
       context.strokeRect(0, 0, patternSize.width, patternSize.height)
       drawPatternContent(context, document, { fillEmptyBeads: !traceImage?.visible })
+      if (showGuideSteps) drawGuideSteps(context, document)
 
       if (mirrorMode !== 'none') {
         context.save()
@@ -357,7 +366,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           if (!position || !document.cells[key]) continue
           const row = position[0] + selectionDelta.row
           const column = position[1] + selectionDelta.column
-          const bead = getBeadGeometry(row, column)
+          const bead = getBeadGeometry(row, column, document.rows)
 
           context.beginPath()
           context.ellipse(
@@ -405,6 +414,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       selectedKeys,
       selectionBox,
       selectionDelta,
+      showGuideSteps,
       tool,
       traceAsset,
       traceImage,
@@ -507,6 +517,20 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         world.x <= traceImage.x + traceSize.width &&
         world.y >= traceImage.y &&
         world.y <= traceImage.y + traceSize.height
+
+      if (!shouldPan && tool === 'number') {
+        if (numberingMode === 'manual' && event.button === 0) {
+          const guidePoint = hitTestGuidePoint(
+            world.x,
+            world.y,
+            document.rows,
+            document.columns,
+          )
+          if (guidePoint) onGuideStepToggle(guidePoint[0], guidePoint[1])
+        }
+        canvas.releasePointerCapture(event.pointerId)
+        return
+      }
 
       if (!shouldPan && tool === 'select') {
         if (event.button !== 0) {
@@ -629,7 +653,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         for (const key of Object.keys(document.cells)) {
           const position = parseBeadKey(key)
           if (!position) continue
-          const bead = getBeadGeometry(position[0], position[1])
+          const bead = getBeadGeometry(position[0], position[1], document.rows)
           if (
             bead.centerX >= left &&
             bead.centerX <= right &&
@@ -750,6 +774,8 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           ? 'cell'
           : tool === 'trace'
             ? 'move'
+            : tool === 'number'
+              ? numberingMode === 'manual' ? 'pointer' : 'default'
             : tool === 'select'
               ? 'default'
               : 'crosshair'

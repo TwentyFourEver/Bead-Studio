@@ -29,6 +29,42 @@ interface HeaderControlsProps {
   onTraceRemove: () => void
 }
 
+interface EditableNumberInputProps {
+  value: number
+  onValueChange: (value: number) => void
+  min?: number
+  max?: number
+  title?: string
+}
+
+function EditableNumberInput({
+  value,
+  onValueChange,
+  min,
+  max,
+  title,
+}: EditableNumberInputProps) {
+  const [draft, setDraft] = useState<string | null>(null)
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      value={draft ?? value}
+      title={title}
+      onFocus={() => setDraft(String(value))}
+      onChange={(event) => {
+        setDraft(event.target.value)
+        if (Number.isFinite(event.target.valueAsNumber)) {
+          onValueChange(event.target.valueAsNumber)
+        }
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  )
+}
+
 export function HeaderControls({
   mirrorMode,
   onMirrorModeChange,
@@ -207,26 +243,16 @@ export function HeaderControls({
                     <div className="trace-position-grid">
                       <label>
                         <span>Posición X</span>
-                        <input
-                          type="number"
+                        <EditableNumberInput
                           value={Math.round(traceImage.x)}
-                          onChange={(event) => {
-                            if (Number.isFinite(event.target.valueAsNumber)) {
-                              onTraceChange({ x: event.target.valueAsNumber })
-                            }
-                          }}
+                          onValueChange={(x) => onTraceChange({ x })}
                         />
                       </label>
                       <label>
                         <span>Posición Y</span>
-                        <input
-                          type="number"
+                        <EditableNumberInput
                           value={Math.round(traceImage.y)}
-                          onChange={(event) => {
-                            if (Number.isFinite(event.target.valueAsNumber)) {
-                              onTraceChange({ y: event.target.valueAsNumber })
-                            }
-                          }}
+                          onValueChange={(y) => onTraceChange({ y })}
                         />
                       </label>
                     </div>
@@ -274,33 +300,23 @@ export function HeaderControls({
         <div className="header-dimensions">
           <label>
             <span className="sr-only">Columnas</span>
-            <input
-              type="number"
-              min="2"
-              max="199"
+            <EditableNumberInput
+              min={2}
+              max={199}
               value={columns}
               title="Columnas"
-              onChange={(event) => {
-                if (Number.isFinite(event.target.valueAsNumber)) {
-                  onColumnsChange(event.target.valueAsNumber)
-                }
-              }}
+              onValueChange={onColumnsChange}
             />
           </label>
           <span aria-hidden="true">×</span>
           <label>
             <span className="sr-only">Filas</span>
-            <input
-              type="number"
-              min="2"
-              max="199"
+            <EditableNumberInput
+              min={2}
+              max={199}
               value={rows}
               title="Filas"
-              onChange={(event) => {
-                if (Number.isFinite(event.target.valueAsNumber)) {
-                  onRowsChange(event.target.valueAsNumber)
-                }
-              }}
+              onValueChange={onRowsChange}
             />
           </label>
           <button type="button" onClick={onApplyDimensions}>Aplicar</button>

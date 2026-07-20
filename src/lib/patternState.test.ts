@@ -43,11 +43,12 @@ describe('estado del patrón', () => {
   })
 
   it('conserva el contenido alrededor del centro al ampliar', () => {
-    const resized = resizePattern(base, 7, 7)
+    const resized = resizePattern({ ...base, guideSteps: [{ row: 1, column: 2 }] }, 7, 7)
     expect(resized.rows).toBe(7)
     expect(resized.columns).toBe(7)
     expect(Object.keys(resized.cells)).toHaveLength(3)
     expect(resized.cells['3:3']).toBe('#00ff00')
+    expect(resized.guideSteps).toEqual([{ row: 2, column: 3 }])
   })
 
   it('recorta las bolitas que quedan fuera al reducir', () => {
@@ -66,6 +67,17 @@ describe('estado del patrón', () => {
     expect(memory.has(STORAGE_KEY)).toBe(true)
     expect(loadPattern(storage)).toEqual(base)
     expect(isPatternDocument(base)).toBe(true)
+  })
+
+  it('rechaza números duplicados o colocados sobre una cuenta', () => {
+    expect(isPatternDocument({ ...base, guideSteps: [{ row: 1, column: 2 }] })).toBe(true)
+    expect(
+      isPatternDocument({
+        ...base,
+        guideSteps: [{ row: 1, column: 2 }, { row: 1, column: 2 }],
+      }),
+    ).toBe(false)
+    expect(isPatternDocument({ ...base, guideSteps: [{ row: 0, column: 0 }] })).toBe(false)
   })
 
   it('restaura el estado inicial si el guardado está corrupto', () => {

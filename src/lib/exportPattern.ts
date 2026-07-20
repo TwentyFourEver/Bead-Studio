@@ -1,9 +1,17 @@
-import { beadKey, generateBeads, getPatternSize } from './geometry'
+import {
+  beadKey,
+  generateBeads,
+  getPatternSize,
+  GRID_STEP,
+  gridDimensionToBeadCount,
+  PATTERN_PADDING,
+} from './geometry'
 import type { PatternDocument } from '../types'
 
 interface RenderOptions {
   scale?: number
   includeShadow?: boolean
+  showGuideSteps?: boolean
 }
 
 export function renderPattern(
@@ -22,19 +30,21 @@ export function renderPattern(
     context.fillRect(0, 0, width, height)
   }
 
-  drawPatternContent(context, document)
+  drawPatternContent(context, document, { showEmptyBeads: false })
+  if (options.showGuideSteps !== false) drawGuideSteps(context, document)
   context.restore()
 }
 
 export function drawPatternContent(
   context: CanvasRenderingContext2D,
   document: PatternDocument,
-  options: { fillEmptyBeads?: boolean } = {},
+  options: { fillEmptyBeads?: boolean; showEmptyBeads?: boolean } = {},
 ) {
   context.lineWidth = 1.6
   context.lineJoin = 'round'
   for (const bead of generateBeads(document.rows, document.columns)) {
     const color = document.cells[beadKey(bead.row, bead.column)]
+    if (!color && options.showEmptyBeads === false) continue
     context.beginPath()
     context.ellipse(
       bead.centerX,
@@ -72,7 +82,38 @@ export function drawPatternContent(
   }
 }
 
-export function exportPatternPng(document: PatternDocument) {
+export function drawGuideSteps(
+  context: CanvasRenderingContext2D,
+  document: PatternDocument,
+) {
+  const steps = document.guideSteps ?? []
+  if (!steps.length) return
+
+  context.save()
+  context.font = '700 13px Inter, system-ui, sans-serif'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.lineWidth = 1.25
+
+  steps.forEach((step, index) => {
+    const label = String(index + 1)
+    const centerX = PATTERN_PADDING + step.column * GRID_STEP
+    const centerY = PATTERN_PADDING + step.row * GRID_STEP
+    const width = Math.max(18, context.measureText(label).width + 8)
+
+    context.beginPath()
+    context.roundRect(centerX - width / 2, centerY - 9, width, 18, 6)
+    context.fillStyle = index === 0 ? '#9a472f' : 'rgba(255, 255, 255, 0.94)'
+    context.fill()
+    context.strokeStyle = index === 0 ? '#743321' : 'rgba(94, 85, 77, 0.55)'
+    context.stroke()
+    context.fillStyle = index === 0 ? '#ffffff' : '#282421'
+    context.fillText(label, centerX, centerY + 0.5)
+  })
+  context.restore()
+}
+
+export function exportPatternPng(document: PatternDocument, showGuideSteps = true) {
   const { width, height } = getPatternSize(document.rows, document.columns)
   const exportScale = 2
   const canvas = window.document.createElement('canvas')
@@ -80,14 +121,16 @@ export function exportPatternPng(document: PatternDocument) {
   canvas.height = Math.ceil(height * exportScale)
   const context = canvas.getContext('2d')
   if (!context) throw new Error('No fue posible preparar la imagen.')
-  renderPattern(context, document, { scale: exportScale })
+  renderPattern(context, document, { scale: exportScale, showGuideSteps })
 
   canvas.toBlob((blob) => {
     if (!blob) return
     const url = URL.createObjectURL(blob)
     const link = window.document.createElement('a')
     link.href = url
-    link.download = `patron-bisuteria-${document.columns}x${document.rows}.png`
+    const columns = gridDimensionToBeadCount(document.columns)
+    const rows = gridDimensionToBeadCount(document.rows)
+    link.download = `patron-bisuteria-${columns}x${rows}.png`
     link.click()
     URL.revokeObjectURL(url)
   }, 'image/png')

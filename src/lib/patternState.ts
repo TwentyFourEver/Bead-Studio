@@ -1,4 +1,4 @@
-import { beadKey, clampDimension, isBeadCell, parseBeadKey } from './geometry'
+import { beadKey, clampDimension, isBeadCell, isGuidePoint, parseBeadKey } from './geometry'
 import type { PatternDocument } from '../types'
 
 export const STORAGE_KEY = 'bead-studio-pattern-v1'
@@ -8,6 +8,7 @@ export const DEFAULT_PATTERN: PatternDocument = {
   rows: 30,
   columns: 30,
   cells: {},
+  guideSteps: [],
   background: {
     mode: 'transparent',
     color: '#f7f3ed',
@@ -34,7 +35,7 @@ export function isPatternDocument(value: unknown): value is PatternDocument {
     return false
   }
 
-  return Object.entries(candidate.cells).every(([key, color]) => {
+  const validCells = Object.entries(candidate.cells).every(([key, color]) => {
     const position = parseBeadKey(key)
     return (
       position !== null &&
@@ -44,6 +45,26 @@ export function isPatternDocument(value: unknown): value is PatternDocument {
       typeof color === 'string' &&
       COLOR_PATTERN.test(color)
     )
+  })
+  if (!validCells) return false
+
+  if (candidate.guideSteps === undefined) return true
+  if (!Array.isArray(candidate.guideSteps)) return false
+  const uniqueSteps = new Set<string>()
+  return candidate.guideSteps.every((step) => {
+    if (
+      !step ||
+      typeof step !== 'object' ||
+      !Number.isInteger(step.row) ||
+      !Number.isInteger(step.column) ||
+      !isGuidePoint(step.row, step.column, candidate.rows!, candidate.columns!)
+    ) {
+      return false
+    }
+    const key = beadKey(step.row, step.column)
+    if (uniqueSteps.has(key)) return false
+    uniqueSteps.add(key)
+    return true
   })
 }
 
@@ -104,7 +125,13 @@ export function resizePattern(
     }
   }
 
-  return { ...document, rows, columns, cells }
+  const guideSteps = (document.guideSteps ?? []).flatMap((step) => {
+    const row = step.row + shift.row
+    const column = step.column + shift.column
+    return isGuidePoint(row, column, rows, columns) ? [{ row, column }] : []
+  })
+
+  return { ...document, rows, columns, cells, guideSteps }
 }
 
 export function paintCells(

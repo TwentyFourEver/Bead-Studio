@@ -61,6 +61,7 @@ export function isBeadStudioProject(value: unknown): value is BeadStudioProject 
     COLOR_PATTERN.test(editor.color) &&
     MIRROR_MODES.includes(editor.mirrorMode as MirrorMode) &&
     REFERENCE_MODES.includes(editor.referenceMode as ReferenceMode) &&
+    (editor.showGuideSteps === undefined || typeof editor.showGuideSteps === 'boolean') &&
     (editor.traceImage === null || isTraceImage(editor.traceImage))
   )
 }

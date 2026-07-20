@@ -5,7 +5,9 @@ export const BEAD_MAJOR_RADIUS = 14
 export const BEAD_MINOR_RADIUS = 9
 export const PATTERN_PADDING = 28
 export const MIN_DIMENSION = 2
-export const MAX_DIMENSION = 199
+export const MIN_BEAD_COUNT = 2
+export const MAX_BEAD_COUNT = 199
+export const MAX_DIMENSION = MAX_BEAD_COUNT * 2 - 1
 export const MIN_SCALE = 0.25
 export const MAX_SCALE = 6
 
@@ -23,8 +25,19 @@ export function isBeadCell(row: number, column: number) {
   return row >= 0 && column >= 0 && (row + column) % 2 === 0
 }
 
-export function getBeadGeometry(row: number, column: number): BeadGeometry {
-  const vertical = row % 2 === 0
+export function isGuidePoint(row: number, column: number, rows: number, columns: number) {
+  return (
+    row >= 0 &&
+    row < rows &&
+    column >= 0 &&
+    column < columns &&
+    (row + column) % 2 !== 0
+  )
+}
+
+export function getBeadGeometry(row: number, column: number, rowCount?: number): BeadGeometry {
+  const isVerticalBorder = row === 0 || (rowCount !== undefined && row === rowCount - 1)
+  const vertical = isVerticalBorder || row % 2 !== 0
   return {
     row,
     column,
@@ -40,7 +53,7 @@ export function generateBeads(rows: number, columns: number) {
   const beads: BeadGeometry[] = []
   for (let row = 0; row < rows; row += 1) {
     for (let column = row % 2; column < columns; column += 2) {
-      beads.push(getBeadGeometry(row, column))
+      beads.push(getBeadGeometry(row, column, rows))
     }
   }
   return beads
@@ -81,11 +94,26 @@ export function hitTestBead(
       ) {
         continue
       }
-      const bead = getBeadGeometry(row, column)
+      const bead = getBeadGeometry(row, column, rows)
       if (pointInBead(x, y, bead)) return bead
     }
   }
   return null
+}
+
+export function hitTestGuidePoint(
+  x: number,
+  y: number,
+  rows: number,
+  columns: number,
+): [number, number] | null {
+  const column = Math.round((x - PATTERN_PADDING) / GRID_STEP)
+  const row = Math.round((y - PATTERN_PADDING) / GRID_STEP)
+  if (!isGuidePoint(row, column, rows, columns)) return null
+
+  const centerX = PATTERN_PADDING + column * GRID_STEP
+  const centerY = PATTERN_PADDING + row * GRID_STEP
+  return Math.hypot(x - centerX, y - centerY) <= GRID_STEP * 0.6 ? [row, column] : null
 }
 
 export function getMirroredCells(
@@ -133,6 +161,18 @@ export function clampScale(scale: number) {
 
 export function clampDimension(value: number) {
   return Math.min(MAX_DIMENSION, Math.max(MIN_DIMENSION, Math.round(value)))
+}
+
+export function clampBeadCount(value: number) {
+  return Math.min(MAX_BEAD_COUNT, Math.max(MIN_BEAD_COUNT, Math.round(value)))
+}
+
+export function gridDimensionToBeadCount(value: number) {
+  return Math.ceil(clampDimension(value) / 2)
+}
+
+export function beadCountToGridDimension(value: number) {
+  return clampBeadCount(value) * 2 - 1
 }
 
 export function fitPatternInViewport(

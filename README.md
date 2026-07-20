@@ -31,6 +31,7 @@ La compilación de producción se genera en `dist/`.
 - Zoom: rueda del ratón, botones `+`/`−` o teclas `+`/`−`.
 - Paneo: barra espaciadora más arrastre, o arrastre con el botón central.
 - Simetría: lateral, arriba/abajo o ambos ejes.
+- Guía numerada: activa **Numerar pasos** o pulsa `N`. En modo **Manual**, haz clic entre las cuentas siguiendo el recorrido del hilo. En modo **Automática**, la aplicación detecta las cruces completas de cuatro cuentas y las numera horizontalmente por filas: la primera de derecha a izquierda, la siguiente de izquierda a derecha y así sucesivamente. El primer paso marca el inicio y puedes cambiar al modo manual para corregir el orden. La guía puede ocultarse sin borrarla; su visibilidad se guarda en el proyecto y determina si aparece en el PNG.
 - Referencia: carga una imagen en una ventana flotante, movible y redimensionable, para verla mientras dibujas. Desde el mismo menú puedes cambiar al modo Calcado, ajustar opacidad, tamaño y posición, o arrastrarla sobre el lienzo con `T`. La referencia no se incluye en el PNG exportado.
 - Proyectos: usa **Guardar proyecto** para descargar un archivo `.beadstudio`. **Abrir proyecto** restaura las cuentas, dimensiones, fondo, simetría, color activo y referencia para poder seguir editando.
 - Exportación: PNG transparente o con fondo de color.
