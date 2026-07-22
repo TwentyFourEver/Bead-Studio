@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PatternDocument } from '../types'
-import { getPaintedPatternBounds } from './exportPattern'
+import { getGuideRoutePoints, getPaintedPatternBounds } from './exportPattern'
 
 function createDocument(cells: Record<string, string>): PatternDocument {
   return {
@@ -44,5 +44,21 @@ describe('getPaintedPatternBounds', () => {
       '1:0': '#ff0000',
       invalid: '#00ff00',
     }))).toBeNull()
+  })
+})
+
+describe('getGuideRoutePoints', () => {
+  it('keeps the numbering order and converts each valid step to canvas coordinates', () => {
+    const document = createDocument({})
+    document.guideSteps = [
+      { row: 2, column: 3 },
+      { row: 2, column: 1 },
+      { row: 1, column: 2 },
+    ]
+
+    expect(getGuideRoutePoints(document)).toEqual([
+      { x: 88, y: 68 },
+      { x: 48, y: 68 },
+    ])
   })
 })

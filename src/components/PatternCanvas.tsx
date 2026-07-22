@@ -21,7 +21,12 @@ import {
   parseBeadKey,
   screenToWorld,
 } from '../lib/geometry'
-import { drawGuideSteps, drawPatternContent } from '../lib/exportPattern'
+import {
+  drawGuideFlow,
+  drawGuideSteps,
+  drawPatternContent,
+  getGuideRouteAnimation,
+} from '../lib/exportPattern'
 import { collectGuidePointsAlongSegment } from '../lib/guideDrag'
 import {
   getTraceImageSize,
@@ -144,6 +149,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     forwardedRef,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
+    const guideFlowCanvasRef = useRef<HTMLCanvasElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const interactionRef = useRef<PointerInteraction | null>(null)
     const viewRef = useRef<ViewTransform>(INITIAL_VIEW)
@@ -436,6 +442,53 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       viewport.height,
       viewport.width,
     ])
+
+    useEffect(() => {
+      const canvas = guideFlowCanvasRef.current
+      if (!canvas || !viewport.width || !viewport.height) return
+
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = Math.round(viewport.width * dpr)
+      canvas.height = Math.round(viewport.height * dpr)
+      const context = canvas.getContext('2d')
+      if (!context) return
+
+      const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
+      const guideRoute = getGuideRouteAnimation(document)
+      const canAnimate = () =>
+        showGuideSteps &&
+        guideRoute.length > 0 &&
+        !motionPreference.matches
+      let animationFrame = 0
+
+      const clearAnimation = () => {
+        context.setTransform(dpr, 0, 0, dpr, 0, 0)
+        context.clearRect(0, 0, viewport.width, viewport.height)
+      }
+
+      const drawAnimation = (timestamp: number) => {
+        clearAnimation()
+        context.save()
+        context.translate(view.offsetX, view.offsetY)
+        context.scale(view.scale, view.scale)
+        drawGuideFlow(context, guideRoute, timestamp)
+        context.restore()
+        if (canAnimate()) animationFrame = window.requestAnimationFrame(drawAnimation)
+      }
+
+      const updateAnimation = () => {
+        window.cancelAnimationFrame(animationFrame)
+        clearAnimation()
+        if (canAnimate()) animationFrame = window.requestAnimationFrame(drawAnimation)
+      }
+
+      motionPreference.addEventListener('change', updateAnimation)
+      updateAnimation()
+      return () => {
+        window.cancelAnimationFrame(animationFrame)
+        motionPreference.removeEventListener('change', updateAnimation)
+      }
+    }, [document, showGuideSteps, view, viewport.height, viewport.width])
 
     useEffect(() => {
       const isEditableTarget = (target: EventTarget | null) =>
@@ -866,6 +919,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           onPointerCancel={endInteraction}
           onWheel={handleWheel}
         />
+        <canvas ref={guideFlowCanvasRef} aria-hidden="true" className="guide-flow-canvas" />
       </div>
     )
   },

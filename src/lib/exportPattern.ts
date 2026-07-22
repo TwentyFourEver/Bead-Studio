@@ -23,7 +23,84 @@ export interface PatternBounds {
   height: number
 }
 
+export interface GuideRoutePoint {
+  x: number
+  y: number
+}
+
+interface GuideRouteSegment {
+  start: GuideRoutePoint
+  end: GuideRoutePoint
+  startDistance: number
+  length: number
+  startIndex: number
+  endIndex: number
+}
+
+export interface GuideRouteAnimation {
+  points: GuideRoutePoint[]
+  segments: GuideRouteSegment[]
+  length: number
+}
+
 const EXPORT_CONTENT_MARGIN = 2
+const GUIDE_FLOW_SPEED = 30
+
+export function getGuideRoutePoints(document: PatternDocument): GuideRoutePoint[] {
+  return (document.guideSteps ?? [])
+    .filter((step) =>
+      isNumberableGuidePoint(step.row, step.column, document.rows, document.columns),
+    )
+    .map((step) => ({
+      x: PATTERN_PADDING + step.column * GRID_STEP,
+      y: PATTERN_PADDING + step.row * GRID_STEP,
+    }))
+}
+
+function traceGuideRoute(
+  context: CanvasRenderingContext2D,
+  points: GuideRoutePoint[],
+) {
+  context.beginPath()
+  context.moveTo(points[0].x, points[0].y)
+  for (const point of points.slice(1)) context.lineTo(point.x, point.y)
+}
+
+export function getGuideRouteAnimation(document: PatternDocument): GuideRouteAnimation {
+  const points = getGuideRoutePoints(document)
+  const segments: GuideRouteSegment[] = []
+  let routeLength = 0
+
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1]
+    const end = points[index]
+    const segmentLength = Math.hypot(end.x - start.x, end.y - start.y)
+    if (segmentLength === 0) continue
+    segments.push({
+      start,
+      end,
+      startDistance: routeLength,
+      length: segmentLength,
+      startIndex: index - 1,
+      endIndex: index,
+    })
+    routeLength += segmentLength
+  }
+
+  return { points, segments, length: routeLength }
+}
+
+function getActiveGuideSegment(route: GuideRouteAnimation, distance: number) {
+  let start = 0
+  let end = route.segments.length - 1
+  while (start < end) {
+    const middle = Math.floor((start + end) / 2)
+    const segment = route.segments[middle]
+    if (distance <= segment.startDistance + segment.length) end = middle
+    else start = middle + 1
+  }
+  return route.segments[start]
+}
 
 export function getPaintedPatternBounds(document: PatternDocument): PatternBounds | null {
   let minX = Number.POSITIVE_INFINITY
@@ -140,7 +217,24 @@ export function drawGuideSteps(
   )
   if (!steps.length) return
 
+  const routePoints = getGuideRoutePoints(document)
+
   context.save()
+  if (routePoints.length > 1) {
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+
+    traceGuideRoute(context, routePoints)
+    context.strokeStyle = 'rgba(255, 255, 255, 0.88)'
+    context.lineWidth = 5
+    context.stroke()
+
+    traceGuideRoute(context, routePoints)
+    context.strokeStyle = '#9a472f'
+    context.lineWidth = 2.25
+    context.stroke()
+  }
+
   context.font = '700 9px Inter, system-ui, sans-serif'
   context.textAlign = 'center'
   context.textBaseline = 'middle'
@@ -161,6 +255,54 @@ export function drawGuideSteps(
     context.fillStyle = index === 0 ? '#ffffff' : '#282421'
     context.fillText(label, centerX, centerY + 0.25)
   })
+  context.restore()
+}
+
+export function drawGuideFlow(
+  context: CanvasRenderingContext2D,
+  route: GuideRouteAnimation,
+  elapsedMilliseconds: number,
+) {
+  if (route.length === 0) return
+
+  const traveledDistance = (elapsedMilliseconds / 1000) * GUIDE_FLOW_SPEED % route.length
+  const segment = getActiveGuideSegment(route, traveledDistance)
+  if (!segment) return
+  const progress = (traveledDistance - segment.startDistance) / segment.length
+  const tailProgress = Math.max(0, progress - 12 / segment.length)
+  const marker = {
+    x: segment.start.x + (segment.end.x - segment.start.x) * progress,
+    y: segment.start.y + (segment.end.y - segment.start.y) * progress,
+  }
+  const tail = {
+    x: segment.start.x + (segment.end.x - segment.start.x) * tailProgress,
+    y: segment.start.y + (segment.end.y - segment.start.y) * tailProgress,
+  }
+
+  context.save()
+  context.lineCap = 'round'
+  context.beginPath()
+  context.moveTo(tail.x, tail.y)
+  context.lineTo(marker.x, marker.y)
+  context.strokeStyle = 'rgba(255, 190, 118, 0.98)'
+  context.lineWidth = 3.2
+  context.shadowColor = 'rgba(255, 151, 74, 0.9)'
+  context.shadowBlur = 5
+  context.stroke()
+
+  context.beginPath()
+  context.arc(marker.x, marker.y, 2.7, 0, Math.PI * 2)
+  context.fillStyle = '#fff7dc'
+  context.shadowColor = '#ff8a3d'
+  context.shadowBlur = 7
+  context.fill()
+
+  context.font = '700 9px Inter, system-ui, sans-serif'
+  for (const index of [segment.startIndex, segment.endIndex]) {
+    const labelWidth = Math.max(13, context.measureText(String(index + 1)).width + 5)
+    const point = route.points[index]
+    context.clearRect(point.x - labelWidth / 2 - 1, point.y - 7.5, labelWidth + 2, 15)
+  }
   context.restore()
 }
 
