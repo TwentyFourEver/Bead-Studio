@@ -47,6 +47,7 @@ describe('geometría del patrón', () => {
   it('detecta los centros disponibles para numerar el recorrido', () => {
     expect(hitTestGuidePoint(48, 28, 5, 5)).toEqual([0, 1])
     expect(hitTestGuidePoint(28, 28, 5, 5)).toBeNull()
+    expect(hitTestGuidePoint(28, 48, 5, 5)).toBeNull()
     expect(hitTestGuidePoint(61, 28, 5, 5)).toBeNull()
   })
 

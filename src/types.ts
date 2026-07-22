@@ -1,5 +1,6 @@
 export type ToolMode = 'paint' | 'erase' | 'select' | 'pan' | 'trace' | 'number'
 export type NumberingMode = 'manual' | 'automatic'
+export type GuideStartDirection = 'right' | 'left' | 'top' | 'bottom'
 export type MirrorMode = 'none' | 'vertical' | 'horizontal' | 'both'
 export type BeadOrientation = 'vertical' | 'horizontal'
 export type BackgroundMode = 'transparent' | 'solid'

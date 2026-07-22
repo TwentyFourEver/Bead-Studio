@@ -8,6 +8,7 @@ export const MIN_DIMENSION = 2
 export const MIN_BEAD_COUNT = 2
 export const MAX_BEAD_COUNT = 199
 export const MAX_DIMENSION = MAX_BEAD_COUNT * 2 - 1
+export const IMPORT_VISIBLE_MARGIN = 5
 export const MIN_SCALE = 0.25
 export const MAX_SCALE = 6
 
@@ -33,6 +34,15 @@ export function isGuidePoint(row: number, column: number, rows: number, columns:
     column < columns &&
     (row + column) % 2 !== 0
   )
+}
+
+export function isNumberableGuidePoint(
+  row: number,
+  column: number,
+  rows: number,
+  columns: number,
+) {
+  return isGuidePoint(row, column, rows, columns) && row % 2 === 0 && column % 2 !== 0
 }
 
 export function getBeadGeometry(row: number, column: number, rowCount?: number): BeadGeometry {
@@ -109,7 +119,7 @@ export function hitTestGuidePoint(
 ): [number, number] | null {
   const column = Math.round((x - PATTERN_PADDING) / GRID_STEP)
   const row = Math.round((y - PATTERN_PADDING) / GRID_STEP)
-  if (!isGuidePoint(row, column, rows, columns)) return null
+  if (!isNumberableGuidePoint(row, column, rows, columns)) return null
 
   const centerX = PATTERN_PADDING + column * GRID_STEP
   const centerY = PATTERN_PADDING + row * GRID_STEP

@@ -1,62 +1,68 @@
-export type CellSnapshot = Record<string, string>
+import type { PatternDocument, ReferenceMode, TraceImage } from '../types'
 
-export interface CellHistoryState {
-  past: CellSnapshot[]
-  future: CellSnapshot[]
+export interface EditorSnapshot {
+  document: PatternDocument
+  traceImage: TraceImage | null
+  referenceMode: ReferenceMode
 }
 
-export interface CellHistoryTransition {
-  history: CellHistoryState
-  cells: CellSnapshot
+export interface EditorHistoryState {
+  past: EditorSnapshot[]
+  future: EditorSnapshot[]
+}
+
+export interface EditorHistoryTransition {
+  history: EditorHistoryState
+  snapshot: EditorSnapshot
 }
 
 const HISTORY_LIMIT = 50
 
-function appendSnapshot(stack: CellSnapshot[], snapshot: CellSnapshot) {
+function appendSnapshot(stack: EditorSnapshot[], snapshot: EditorSnapshot) {
   return [...stack.slice(-(HISTORY_LIMIT - 1)), snapshot]
 }
 
-export function createCellHistory(): CellHistoryState {
+export function createEditorHistory(): EditorHistoryState {
   return { past: [], future: [] }
 }
 
-export function recordCellChange(
-  history: CellHistoryState,
-  previousCells: CellSnapshot,
-): CellHistoryState {
+export function recordEditorChange(
+  history: EditorHistoryState,
+  previousSnapshot: EditorSnapshot,
+): EditorHistoryState {
   return {
-    past: appendSnapshot(history.past, previousCells),
+    past: appendSnapshot(history.past, previousSnapshot),
     future: [],
   }
 }
 
-export function undoCellChange(
-  history: CellHistoryState,
-  currentCells: CellSnapshot,
-): CellHistoryTransition | null {
-  const previousCells = history.past.at(-1)
-  if (!previousCells) return null
+export function undoEditorChange(
+  history: EditorHistoryState,
+  currentSnapshot: EditorSnapshot,
+): EditorHistoryTransition | null {
+  const previousSnapshot = history.past.at(-1)
+  if (!previousSnapshot) return null
 
   return {
-    cells: previousCells,
+    snapshot: previousSnapshot,
     history: {
       past: history.past.slice(0, -1),
-      future: appendSnapshot(history.future, currentCells),
+      future: appendSnapshot(history.future, currentSnapshot),
     },
   }
 }
 
-export function redoCellChange(
-  history: CellHistoryState,
-  currentCells: CellSnapshot,
-): CellHistoryTransition | null {
-  const nextCells = history.future.at(-1)
-  if (!nextCells) return null
+export function redoEditorChange(
+  history: EditorHistoryState,
+  currentSnapshot: EditorSnapshot,
+): EditorHistoryTransition | null {
+  const nextSnapshot = history.future.at(-1)
+  if (!nextSnapshot) return null
 
   return {
-    cells: nextCells,
+    snapshot: nextSnapshot,
     history: {
-      past: appendSnapshot(history.past, currentCells),
+      past: appendSnapshot(history.past, currentSnapshot),
       future: history.future.slice(0, -1),
     },
   }

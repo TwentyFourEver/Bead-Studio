@@ -4,6 +4,7 @@ import {
   getPatternSize,
   GRID_STEP,
   gridDimensionToBeadCount,
+  isNumberableGuidePoint,
   PATTERN_PADDING,
 } from './geometry'
 import type { PatternDocument } from '../types'
@@ -12,6 +13,40 @@ interface RenderOptions {
   scale?: number
   includeShadow?: boolean
   showGuideSteps?: boolean
+  viewport?: PatternBounds
+}
+
+export interface PatternBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const EXPORT_CONTENT_MARGIN = 2
+
+export function getPaintedPatternBounds(document: PatternDocument): PatternBounds | null {
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  for (const bead of generateBeads(document.rows, document.columns)) {
+    if (!document.cells[beadKey(bead.row, bead.column)]) continue
+    minX = Math.min(minX, bead.centerX - bead.radiusX)
+    minY = Math.min(minY, bead.centerY - bead.radiusY)
+    maxX = Math.max(maxX, bead.centerX + bead.radiusX)
+    maxY = Math.max(maxY, bead.centerY + bead.radiusY)
+  }
+
+  if (!Number.isFinite(minX)) return null
+
+  return {
+    x: minX - EXPORT_CONTENT_MARGIN,
+    y: minY - EXPORT_CONTENT_MARGIN,
+    width: maxX - minX + EXPORT_CONTENT_MARGIN * 2,
+    height: maxY - minY + EXPORT_CONTENT_MARGIN * 2,
+  }
 }
 
 export function renderPattern(
@@ -21,9 +56,18 @@ export function renderPattern(
 ) {
   const renderScale = options.scale ?? 1
   const { width, height } = getPatternSize(document.rows, document.columns)
+  const viewport = options.viewport ?? { x: 0, y: 0, width, height }
   context.save()
-  context.setTransform(renderScale, 0, 0, renderScale, 0, 0)
-  context.clearRect(0, 0, width, height)
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.clearRect(0, 0, context.canvas.width, context.canvas.height)
+  context.setTransform(
+    renderScale,
+    0,
+    0,
+    renderScale,
+    -viewport.x * renderScale,
+    -viewport.y * renderScale,
+  )
 
   if (document.background.mode === 'solid') {
     context.fillStyle = document.background.color
@@ -38,12 +82,17 @@ export function renderPattern(
 export function drawPatternContent(
   context: CanvasRenderingContext2D,
   document: PatternDocument,
-  options: { fillEmptyBeads?: boolean; showEmptyBeads?: boolean } = {},
+  options: {
+    fillEmptyBeads?: boolean
+    showEmptyBeads?: boolean
+    showPaintedBeads?: boolean
+  } = {},
 ) {
   context.lineWidth = 1.6
   context.lineJoin = 'round'
   for (const bead of generateBeads(document.rows, document.columns)) {
     const color = document.cells[beadKey(bead.row, bead.column)]
+    if (color && options.showPaintedBeads === false) continue
     if (!color && options.showEmptyBeads === false) continue
     context.beginPath()
     context.ellipse(
@@ -86,42 +135,50 @@ export function drawGuideSteps(
   context: CanvasRenderingContext2D,
   document: PatternDocument,
 ) {
-  const steps = document.guideSteps ?? []
+  const steps = (document.guideSteps ?? []).filter((step) =>
+    isNumberableGuidePoint(step.row, step.column, document.rows, document.columns),
+  )
   if (!steps.length) return
 
   context.save()
-  context.font = '700 13px Inter, system-ui, sans-serif'
+  context.font = '700 9px Inter, system-ui, sans-serif'
   context.textAlign = 'center'
   context.textBaseline = 'middle'
-  context.lineWidth = 1.25
+  context.lineWidth = 0.9
 
   steps.forEach((step, index) => {
     const label = String(index + 1)
     const centerX = PATTERN_PADDING + step.column * GRID_STEP
     const centerY = PATTERN_PADDING + step.row * GRID_STEP
-    const width = Math.max(18, context.measureText(label).width + 8)
+    const width = Math.max(13, context.measureText(label).width + 5)
 
     context.beginPath()
-    context.roundRect(centerX - width / 2, centerY - 9, width, 18, 6)
+    context.roundRect(centerX - width / 2, centerY - 6.5, width, 13, 4)
     context.fillStyle = index === 0 ? '#9a472f' : 'rgba(255, 255, 255, 0.94)'
     context.fill()
     context.strokeStyle = index === 0 ? '#743321' : 'rgba(94, 85, 77, 0.55)'
     context.stroke()
     context.fillStyle = index === 0 ? '#ffffff' : '#282421'
-    context.fillText(label, centerX, centerY + 0.5)
+    context.fillText(label, centerX, centerY + 0.25)
   })
   context.restore()
 }
 
 export function exportPatternPng(document: PatternDocument, showGuideSteps = true) {
-  const { width, height } = getPatternSize(document.rows, document.columns)
+  const paintedBounds = getPaintedPatternBounds(document)
+  if (!paintedBounds) return false
+
   const exportScale = 2
   const canvas = window.document.createElement('canvas')
-  canvas.width = Math.ceil(width * exportScale)
-  canvas.height = Math.ceil(height * exportScale)
+  canvas.width = Math.ceil(paintedBounds.width * exportScale)
+  canvas.height = Math.ceil(paintedBounds.height * exportScale)
   const context = canvas.getContext('2d')
   if (!context) throw new Error('No fue posible preparar la imagen.')
-  renderPattern(context, document, { scale: exportScale, showGuideSteps })
+  renderPattern(context, document, {
+    scale: exportScale,
+    showGuideSteps,
+    viewport: paintedBounds,
+  })
 
   canvas.toBlob((blob) => {
     if (!blob) return
@@ -134,6 +191,8 @@ export function exportPatternPng(document: PatternDocument, showGuideSteps = tru
     link.click()
     URL.revokeObjectURL(url)
   }, 'image/png')
+
+  return true
 }
 
 function darkenHex(hex: string, amount: number) {

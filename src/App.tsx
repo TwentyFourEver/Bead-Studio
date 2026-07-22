@@ -1,20 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PatternCanvas, type PatternCanvasHandle } from './components/PatternCanvas'
 import { HeaderControls } from './components/HeaderControls'
 import { FloatingReference } from './components/FloatingReference'
-import { Toolbar } from './components/Toolbar'
+import { ImageImportDialog } from './components/ImageImportDialog'
+import { DesignToolButtons, InterfaceIcon, Toolbar } from './components/Toolbar'
 import {
   beadCountToGridDimension,
   clampBeadCount,
   getPatternSize,
   gridDimensionToBeadCount,
+  isNumberableGuidePoint,
 } from './lib/geometry'
 import { exportPatternPng } from './lib/exportPattern'
 import {
-  createCellHistory,
-  recordCellChange,
-  redoCellChange,
-  undoCellChange,
+  DEFAULT_IMAGE_ANALYSIS_OPTIONS,
+  gridToSourcePoint,
+  type ImageAnalysisOptions,
+  type PatternAnalysisResult,
+  type RGB,
+} from './lib/imageAnalysis'
+import { prepareImageFile, type PreparedImageFile } from './lib/imageFile'
+import {
+  createImportedDocument,
+  normalizeImportedCells,
+  paletteFromCells,
+} from './lib/imageImportState'
+import {
+  createEditorHistory,
+  recordEditorChange,
+  redoEditorChange,
+  undoEditorChange,
+  type EditorSnapshot,
 } from './lib/cellHistory'
 import { generateAutomaticGuide } from './lib/guideNumbering'
 import { downloadProjectFile, parseProjectFile } from './lib/projectFile'
@@ -27,6 +43,7 @@ import {
 } from './lib/patternState'
 import type {
   BeadStudioProject,
+  GuideStartDirection,
   MirrorMode,
   NumberingMode,
   PatternDocument,
@@ -44,8 +61,149 @@ const TOOL_LABELS: Record<ToolMode, string> = {
   number: 'Numerar pasos',
 }
 
+function removeInvalidGuideSteps(document: PatternDocument): PatternDocument {
+  const guideSteps = (document.guideSteps ?? []).filter((step) =>
+    isNumberableGuidePoint(step.row, step.column, document.rows, document.columns),
+  )
+  return guideSteps.length === (document.guideSteps?.length ?? 0)
+    ? document
+    : { ...document, guideSteps }
+}
+
+const GUIDE_START_LABELS: Record<GuideStartDirection, string> = {
+  right: 'la derecha',
+  left: 'la izquierda',
+  top: 'arriba',
+  bottom: 'abajo',
+}
+
+interface ImageImportSession {
+  fileName: string
+  prepared: PreparedImageFile | null
+  options: ImageAnalysisOptions
+  result: PatternAnalysisResult | null
+  overrides: Record<string, string | null>
+  gridSignature: string | null
+  analyzing: boolean
+  error: string | null
+}
+
+interface AnalysisWorkerResultMessage {
+  type: 'result'
+  requestId: number
+  result: PatternAnalysisResult
+}
+
+interface AnalysisWorkerErrorMessage {
+  type: 'error'
+  requestId: number
+  message: string
+}
+
+type AnalysisWorkerMessage = AnalysisWorkerResultMessage | AnalysisWorkerErrorMessage | {
+  type: 'cancelled'
+  requestId: number
+}
+
+function analysisGridSignature(result: PatternAnalysisResult) {
+  const transform = result.transform
+  if (!transform) return null
+  const originBucketX = Math.max(1, transform.stepX / 4)
+  const originBucketY = Math.max(1, transform.stepY / 4)
+  return [
+    result.rows,
+    result.columns,
+    transform.rowOffset,
+    transform.columnOffset,
+    Math.round(transform.originX / originBucketX),
+    Math.round(transform.originY / originBucketY),
+    Math.round(transform.stepX),
+    Math.round(transform.stepY),
+    Math.round(transform.rotationDegrees),
+  ].join('|')
+}
+
+function rgbToHex({ r, g, b }: RGB) {
+  const channel = (value: number) => Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, '0')
+  return `#${channel(r)}${channel(g)}${channel(b)}`
+}
+
+function hexToRgb(color: string): RGB {
+  return {
+    r: Number.parseInt(color.slice(1, 3), 16),
+    g: Number.parseInt(color.slice(3, 5), 16),
+    b: Number.parseInt(color.slice(5, 7), 16),
+  }
+}
+
+function createImportedTraceImage(
+  prepared: PreparedImageFile,
+  importedDocument: PatternDocument,
+): TraceImage {
+  const pattern = getPatternSize(importedDocument.rows, importedDocument.columns)
+  const availableWidth = Math.max(1, pattern.width - 56)
+  const availableHeight = Math.max(1, pattern.height - 56)
+  const baseScale = Math.min(
+    availableWidth / prepared.naturalWidth,
+    availableHeight / prepared.naturalHeight,
+    1,
+  )
+  const width = prepared.naturalWidth * baseScale
+  const height = prepared.naturalHeight * baseScale
+  return {
+    src: prepared.source,
+    name: prepared.name,
+    naturalWidth: prepared.naturalWidth,
+    naturalHeight: prepared.naturalHeight,
+    baseScale,
+    scalePercent: 100,
+    x: (pattern.width - width) / 2,
+    y: (pattern.height - height) / 2,
+    opacity: 0.45,
+    visible: true,
+  }
+}
+
+function samplePreparedColor(
+  prepared: PreparedImageFile,
+  center: { x: number; y: number },
+  radiusX: number,
+  radiusY: number,
+): RGB | null {
+  const { width, height, data } = prepared.image
+  const red: number[] = []
+  const green: number[] = []
+  const blue: number[] = []
+  const left = Math.max(0, Math.floor(center.x - radiusX))
+  const right = Math.min(width - 1, Math.ceil(center.x + radiusX))
+  const top = Math.max(0, Math.floor(center.y - radiusY))
+  const bottom = Math.min(height - 1, Math.ceil(center.y + radiusY))
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) {
+      const dx = (x - center.x) / Math.max(1, radiusX)
+      const dy = (y - center.y) / Math.max(1, radiusY)
+      if (dx * dx + dy * dy > 1) continue
+      const offset = (y * width + x) * 4
+      if (data[offset + 3] < 32) continue
+      red.push(data[offset])
+      green.push(data[offset + 1])
+      blue.push(data[offset + 2])
+    }
+  }
+  if (!red.length) return null
+  red.sort((a, b) => a - b)
+  green.sort((a, b) => a - b)
+  blue.sort((a, b) => a - b)
+  const middle = Math.floor(red.length / 2)
+  return { r: red[middle], g: green[middle], b: blue[middle] }
+}
+
 function App() {
-  const [document, setDocument] = useState<PatternDocument>(() => loadPattern())
+  const [document, setDocument] = useState<PatternDocument>(() =>
+    removeInvalidGuideSteps(loadPattern()),
+  )
   const [projectName, setProjectName] = useState('Patrón sin título')
   const [tool, setTool] = useState<ToolMode>('paint')
   const [color, setColor] = useState('#14b8a6')
@@ -64,41 +222,220 @@ function App() {
   const [referenceMode, setReferenceMode] = useState<ReferenceMode>('floating')
   const [showGuideSteps, setShowGuideSteps] = useState(true)
   const [numberingMode, setNumberingMode] = useState<NumberingMode>('manual')
+  const [guideStartDirection, setGuideStartDirection] =
+    useState<GuideStartDirection>('top')
+  const [imageImport, setImageImport] = useState<ImageImportSession | null>(null)
   const hasTraceImage = traceImage !== null
   const guideStepCount = document.guideSteps?.length ?? 0
   const paintedBeadCount = Object.keys(document.cells).length
+  const documentPaletteColors = useMemo(
+    () => paletteFromCells(document.cells).map(({ color: paletteColor }) => paletteColor),
+    [document.cells],
+  )
   const canvasRef = useRef<PatternCanvasHandle>(null)
+  const projectInputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const documentRef = useRef(document)
-  const strokeSnapshotRef = useRef<Record<string, string> | null>(null)
-  const cellHistoryRef = useRef(createCellHistory())
+  const strokeSnapshotRef = useRef<EditorSnapshot | null>(null)
+  const editorHistoryRef = useRef(createEditorHistory())
+  const traceImageRef = useRef(traceImage)
+  const referenceModeRef = useRef(referenceMode)
+  const analysisWorkerRef = useRef<Worker | null>(null)
+  const analysisRequestRef = useRef(0)
+  const imagePreparationRef = useRef(0)
+  const preparedImport = imageImport?.prepared ?? null
+  const importOptions = imageImport?.options ?? null
 
   const syncHistoryAvailability = useCallback(() => {
     const next = {
-      canUndo: cellHistoryRef.current.past.length > 0,
-      canRedo: cellHistoryRef.current.future.length > 0,
+      canUndo: editorHistoryRef.current.past.length > 0,
+      canRedo: editorHistoryRef.current.future.length > 0,
     }
     setHistoryAvailability((current) =>
       current.canUndo === next.canUndo && current.canRedo === next.canRedo ? current : next,
     )
   }, [])
 
-  const resetCellHistory = useCallback(() => {
-    cellHistoryRef.current = createCellHistory()
+  const resetEditorHistory = useCallback(() => {
+    editorHistoryRef.current = createEditorHistory()
     strokeSnapshotRef.current = null
     syncHistoryAvailability()
   }, [syncHistoryAvailability])
 
-  const rememberCellChange = useCallback(
-    (previousCells: Record<string, string>) => {
-      cellHistoryRef.current = recordCellChange(cellHistoryRef.current, previousCells)
+  const rememberEditorChange = useCallback(
+    (previousSnapshot: EditorSnapshot) => {
+      editorHistoryRef.current = recordEditorChange(editorHistoryRef.current, previousSnapshot)
       syncHistoryAvailability()
     },
     [syncHistoryAvailability],
   )
 
+  const getEditorSnapshot = useCallback(
+    (): EditorSnapshot => ({
+      document: documentRef.current,
+      traceImage: traceImageRef.current,
+      referenceMode: referenceModeRef.current,
+    }),
+    [],
+  )
+
+  const applyEditorSnapshot = useCallback((snapshot: EditorSnapshot) => {
+    const nextReferenceMode = snapshot.traceImage ? snapshot.referenceMode : 'floating'
+    canvasRef.current?.preserveViewForGrid(snapshot.document.rows, snapshot.document.columns)
+    documentRef.current = snapshot.document
+    traceImageRef.current = snapshot.traceImage
+    referenceModeRef.current = nextReferenceMode
+    setDocument(snapshot.document)
+    setTraceImage(snapshot.traceImage)
+    setReferenceMode(nextReferenceMode)
+    setDraftRows(gridDimensionToBeadCount(snapshot.document.rows))
+    setDraftColumns(gridDimensionToBeadCount(snapshot.document.columns))
+    setTool('paint')
+  }, [])
+
   useEffect(() => {
     documentRef.current = document
   }, [document])
+
+  useEffect(() => {
+    traceImageRef.current = traceImage
+  }, [traceImage])
+
+  useEffect(() => {
+    referenceModeRef.current = referenceMode
+  }, [referenceMode])
+
+  useEffect(() => {
+    if (!preparedImport || !importOptions) return
+    const timer = window.setTimeout(() => {
+      analysisWorkerRef.current?.terminate()
+      const requestId = ++analysisRequestRef.current
+      try {
+        const worker = new Worker(
+          new URL('./workers/imageAnalysis.worker.ts', import.meta.url),
+          { type: 'module' },
+        )
+        analysisWorkerRef.current = worker
+        setImageImport((current) => current && current.prepared === preparedImport
+          ? { ...current, analyzing: true, error: null }
+          : current)
+
+        worker.onmessage = (event: MessageEvent<AnalysisWorkerMessage>) => {
+          const message = event.data
+          if (message.requestId !== requestId || requestId !== analysisRequestRef.current) {
+            worker.terminate()
+            return
+          }
+          if (message.type === 'result') {
+            const signature = analysisGridSignature(message.result)
+            setImageImport((current) => {
+              if (!current || current.prepared !== preparedImport) return current
+              const gridChanged = signature !== null &&
+                current.gridSignature !== null &&
+                current.gridSignature !== signature
+              return {
+                ...current,
+                result: gridChanged
+                  ? {
+                      ...message.result,
+                      warnings: [
+                        ...message.result.warnings,
+                        'La retícula cambió y se reiniciaron las correcciones manuales.',
+                      ],
+                    }
+                  : message.result,
+                overrides: gridChanged ? {} : current.overrides,
+                gridSignature: signature ?? current.gridSignature,
+                analyzing: false,
+                error: null,
+              }
+            })
+          } else if (message.type === 'error') {
+            setImageImport((current) => current && current.prepared === preparedImport
+              ? { ...current, analyzing: false, error: message.message }
+              : current)
+          }
+          worker.terminate()
+          if (analysisWorkerRef.current === worker) analysisWorkerRef.current = null
+        }
+        worker.onerror = (event) => {
+          if (requestId !== analysisRequestRef.current) return
+          setImageImport((current) => current && current.prepared === preparedImport
+            ? {
+                ...current,
+                analyzing: false,
+                error: event.message || 'No fue posible analizar la imagen.',
+              }
+            : current)
+          worker.terminate()
+          if (analysisWorkerRef.current === worker) analysisWorkerRef.current = null
+        }
+
+        const transferredData = preparedImport.image.data.slice().buffer
+        worker.postMessage(
+          {
+            type: 'analyze',
+            requestId,
+            image: {
+              width: preparedImport.image.width,
+              height: preparedImport.image.height,
+              data: transferredData,
+            },
+            options: importOptions,
+          },
+          [transferredData],
+        )
+      } catch (error) {
+        analysisWorkerRef.current?.terminate()
+        analysisWorkerRef.current = null
+        setImageImport((current) => current && current.prepared === preparedImport
+          ? {
+              ...current,
+              analyzing: false,
+              error: error instanceof Error
+                ? error.message
+                : 'El navegador no pudo iniciar el análisis local.',
+            }
+          : current)
+      }
+    }, 160)
+
+    return () => {
+      window.clearTimeout(timer)
+      const worker = analysisWorkerRef.current
+      if (worker) {
+        worker.postMessage({ type: 'cancel', requestId: analysisRequestRef.current })
+        worker.terminate()
+        analysisWorkerRef.current = null
+      }
+    }
+  }, [importOptions, preparedImport])
+
+  const effectiveImportResult = useMemo(() => {
+    const result = imageImport?.result
+    if (!result) return null
+    const cells = { ...result.cells }
+    for (const [key, override] of Object.entries(imageImport.overrides)) {
+      if (override === null) delete cells[key]
+      else cells[key] = override
+    }
+    const palette = paletteFromCells(cells).map(({ color: paletteColor, count }) => ({
+      color: paletteColor,
+      rgb: hexToRgb(paletteColor),
+      count,
+    }))
+    const normalized = normalizeImportedCells(cells, {
+      rows: result.rows,
+      columns: result.columns,
+    })
+    return {
+      ...result,
+      cells,
+      palette,
+      beads: result.beads.filter((bead) => cells[`${bead.row}:${bead.column}`]),
+      canApply: result.canApply && normalized !== null,
+    }
+  }, [imageImport])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -116,6 +453,148 @@ function App() {
     const timer = window.setTimeout(() => setNotice(null), 3400)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  const cancelImageImport = useCallback(() => {
+    imagePreparationRef.current += 1
+    analysisRequestRef.current += 1
+    analysisWorkerRef.current?.terminate()
+    analysisWorkerRef.current = null
+    setImageImport(null)
+  }, [])
+
+  const handleAnalyzeImage = useCallback(async (file: File) => {
+    const preparationId = ++imagePreparationRef.current
+    analysisRequestRef.current += 1
+    analysisWorkerRef.current?.terminate()
+    analysisWorkerRef.current = null
+    setImageImport({
+      fileName: file.name,
+      prepared: null,
+      options: { ...DEFAULT_IMAGE_ANALYSIS_OPTIONS },
+      result: null,
+      overrides: {},
+      gridSignature: null,
+      analyzing: true,
+      error: null,
+    })
+    try {
+      const prepared = await prepareImageFile(file)
+      if (preparationId !== imagePreparationRef.current) return
+      setImageImport((current) => current
+        ? { ...current, fileName: prepared.name, prepared, analyzing: true, error: null }
+        : current)
+    } catch (error) {
+      if (preparationId !== imagePreparationRef.current) return
+      setImageImport((current) => current
+        ? {
+            ...current,
+            analyzing: false,
+            error: error instanceof Error ? error.message : 'No fue posible preparar la imagen.',
+          }
+        : current)
+    }
+  }, [])
+
+  const updateImageAnalysisOptions = useCallback((patch: Partial<ImageAnalysisOptions>) => {
+    setImageImport((current) => current
+      ? {
+          ...current,
+          options: { ...current.options, ...patch },
+          analyzing: Boolean(current.prepared),
+          error: null,
+        }
+      : current)
+  }, [])
+
+  const handleImportBackgroundMode = useCallback((mode: 'auto' | 'manual') => {
+    setImageImport((current) => {
+      if (!current) return current
+      const fallback = current.result?.background ?? { r: 255, g: 255, b: 255 }
+      return {
+        ...current,
+        options: {
+          ...current.options,
+          backgroundMode: mode,
+          backgroundColor: mode === 'manual' ? current.options.backgroundColor ?? fallback : null,
+        },
+        analyzing: Boolean(current.prepared),
+        error: null,
+      }
+    })
+  }, [])
+
+  const handlePickImportBackground = useCallback((backgroundColor: RGB) => {
+    updateImageAnalysisOptions({ backgroundMode: 'manual', backgroundColor })
+  }, [updateImageAnalysisOptions])
+
+  const handleToggleImportedCell = useCallback((row: number, column: number) => {
+    if ((row + column) % 2 !== 0) return
+    setImageImport((current) => {
+      const result = current?.result
+      const prepared = current?.prepared
+      const transform = result?.transform
+      if (!current || !result || !prepared || !transform) return current
+      const key = `${row}:${column}`
+      const existingOverride = current.overrides[key]
+      const currentlyPainted = existingOverride === null
+        ? false
+        : typeof existingOverride === 'string' || Boolean(result.cells[key])
+      if (currentlyPainted) {
+        return { ...current, overrides: { ...current.overrides, [key]: null } }
+      }
+
+      const sourcePoint = gridToSourcePoint(transform, row, column)
+      const sampled = samplePreparedColor(
+        prepared,
+        sourcePoint,
+        Math.max(2, transform.stepX * 0.24),
+        Math.max(2, transform.stepY * 0.24),
+      )
+      const sampledColor = result.cells[key]
+        ?? (sampled ? rgbToHex(sampled) : result.palette[0]?.color ?? color)
+      return {
+        ...current,
+        overrides: { ...current.overrides, [key]: sampledColor.toLowerCase() },
+      }
+    })
+  }, [color])
+
+  const confirmImageImport = useCallback(() => {
+    const prepared = imageImport?.prepared
+    if (!prepared || !effectiveImportResult?.canApply) return
+    const normalized = normalizeImportedCells(effectiveImportResult.cells, {
+      rows: effectiveImportResult.rows,
+      columns: effectiveImportResult.columns,
+    })
+    if (!normalized) {
+      setImageImport((current) => current
+        ? { ...current, error: 'El resultado no cabe en el límite de 199 cuentas por eje.' }
+        : current)
+      return
+    }
+
+    const previousSnapshot = getEditorSnapshot()
+    const importedDocument = createImportedDocument(previousSnapshot.document, normalized)
+    const importedTrace = createImportedTraceImage(prepared, importedDocument)
+    rememberEditorChange(previousSnapshot)
+    documentRef.current = importedDocument
+    traceImageRef.current = importedTrace
+    referenceModeRef.current = 'floating'
+    setDocument(importedDocument)
+    setTraceImage(importedTrace)
+    setReferenceMode('floating')
+    setDraftRows(gridDimensionToBeadCount(importedDocument.rows))
+    setDraftColumns(gridDimensionToBeadCount(importedDocument.columns))
+    setTool('paint')
+    analysisWorkerRef.current?.terminate()
+    analysisWorkerRef.current = null
+    imagePreparationRef.current += 1
+    setImageImport(null)
+    window.requestAnimationFrame(() => canvasRef.current?.fit())
+    setNotice(
+      `${Object.keys(importedDocument.cells).length} cuentas convertidas. La imagen quedó como referencia flotante.`,
+    )
+  }, [effectiveImportResult, getEditorSnapshot, imageImport, rememberEditorChange])
 
   const handleSaveProject = () => {
     const name = projectName.trim() || 'Patrón sin título'
@@ -150,19 +629,22 @@ function App() {
 
     try {
       const project = parseProjectFile(await file.text())
-      documentRef.current = project.document
+      const openedDocument = removeInvalidGuideSteps(project.document)
+      documentRef.current = openedDocument
       strokeSnapshotRef.current = null
-      setDocument(project.document)
+      setDocument(openedDocument)
       setProjectName(project.name)
-      setDraftRows(gridDimensionToBeadCount(project.document.rows))
-      setDraftColumns(gridDimensionToBeadCount(project.document.columns))
+      setDraftRows(gridDimensionToBeadCount(openedDocument.rows))
+      setDraftColumns(gridDimensionToBeadCount(openedDocument.columns))
       setColor(project.editor.color)
       setMirrorMode(project.editor.mirrorMode)
       setReferenceMode(project.editor.traceImage ? project.editor.referenceMode : 'floating')
       setTraceImage(project.editor.traceImage)
       setShowGuideSteps(project.editor.showGuideSteps ?? true)
       setTool('paint')
-      resetCellHistory()
+      traceImageRef.current = project.editor.traceImage
+      referenceModeRef.current = project.editor.traceImage ? project.editor.referenceMode : 'floating'
+      resetEditorHistory()
       window.requestAnimationFrame(() => canvasRef.current?.fit())
       setNotice(`Proyecto “${project.name}” abierto. Ya puedes seguir pintando.`)
     } catch {
@@ -180,15 +662,15 @@ function App() {
   )
 
   const handleStrokeStart = useCallback(() => {
-    strokeSnapshotRef.current = documentRef.current.cells
-  }, [])
+    strokeSnapshotRef.current = getEditorSnapshot()
+  }, [getEditorSnapshot])
 
   const handleStrokeEnd = useCallback(() => {
     const snapshot = strokeSnapshotRef.current
     strokeSnapshotRef.current = null
-    if (!snapshot || snapshot === documentRef.current.cells) return
-    rememberCellChange(snapshot)
-  }, [rememberCellChange])
+    if (!snapshot || snapshot.document === documentRef.current) return
+    rememberEditorChange(snapshot)
+  }, [rememberEditorChange])
 
   const handleMoveSelection = useCallback(
     (selectedKeys: string[], rowDelta: number, columnDelta: number) => {
@@ -200,29 +682,26 @@ function App() {
   )
 
   const handleUndo = useCallback(() => {
-    const transition = undoCellChange(cellHistoryRef.current, documentRef.current.cells)
+    const transition = undoEditorChange(editorHistoryRef.current, getEditorSnapshot())
     if (!transition) return
-    cellHistoryRef.current = transition.history
+    editorHistoryRef.current = transition.history
     strokeSnapshotRef.current = null
-    const next = { ...documentRef.current, cells: transition.cells }
-    documentRef.current = next
-    setDocument(next)
+    applyEditorSnapshot(transition.snapshot)
     syncHistoryAvailability()
-  }, [syncHistoryAvailability])
+  }, [applyEditorSnapshot, getEditorSnapshot, syncHistoryAvailability])
 
   const handleRedo = useCallback(() => {
-    const transition = redoCellChange(cellHistoryRef.current, documentRef.current.cells)
+    const transition = redoEditorChange(editorHistoryRef.current, getEditorSnapshot())
     if (!transition) return
-    cellHistoryRef.current = transition.history
+    editorHistoryRef.current = transition.history
     strokeSnapshotRef.current = null
-    const next = { ...documentRef.current, cells: transition.cells }
-    documentRef.current = next
-    setDocument(next)
+    applyEditorSnapshot(transition.snapshot)
     syncHistoryAvailability()
-  }, [syncHistoryAvailability])
+  }, [applyEditorSnapshot, getEditorSnapshot, syncHistoryAvailability])
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (imageImport !== null || window.document.querySelector('dialog[open]')) return
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
@@ -256,7 +735,7 @@ function App() {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [handleRedo, handleUndo, hasTraceImage, referenceMode])
+  }, [handleRedo, handleUndo, hasTraceImage, imageImport, referenceMode])
 
   const enforceMirrorDimensions = useCallback(
     (base: PatternDocument, mode: MirrorMode) => {
@@ -278,7 +757,7 @@ function App() {
       setNotice(
         `Tamaño ajustado a ${gridDimensionToBeadCount(adjusted.columns)} × ${gridDimensionToBeadCount(adjusted.rows)} para una simetría exacta.`,
       )
-      resetCellHistory()
+      resetEditorHistory()
     }
     setDocument(adjusted)
     setDraftRows(gridDimensionToBeadCount(adjusted.rows))
@@ -298,7 +777,7 @@ function App() {
     if ((mirrorMode === 'vertical' || mirrorMode === 'both') && columns % 2 === 0) columns += 1
     setDocument((current) => resizePattern(current, rows, columns))
     if (rows !== document.rows || columns !== document.columns) {
-      resetCellHistory()
+      resetEditorHistory()
     }
     const appliedRows = gridDimensionToBeadCount(rows)
     const appliedColumns = gridDimensionToBeadCount(columns)
@@ -321,7 +800,7 @@ function App() {
   const clearPattern = () => {
     if (!Object.keys(document.cells).length && !guideStepCount) return
     if (!window.confirm('¿Quieres borrar todos los colores y números del patrón?')) return
-    rememberCellChange(document.cells)
+    rememberEditorChange(getEditorSnapshot())
     setDocument((current) => {
       const next = { ...current, cells: {}, guideSteps: [] }
       documentRef.current = next
@@ -332,18 +811,37 @@ function App() {
 
   const handleGuideStepToggle = useCallback((row: number, column: number) => {
     setShowGuideSteps(true)
-    setDocument((current) => {
-      const steps = current.guideSteps ?? []
-      const existingIndex = steps.findIndex(
-        (step) => step.row === row && step.column === column,
-      )
-      const guideSteps = existingIndex >= 0
-        ? steps.filter((_, index) => index !== existingIndex)
-        : [...steps, { row, column }]
-      const next = { ...current, guideSteps }
-      documentRef.current = next
-      return next
+    const current = documentRef.current
+    if (!isNumberableGuidePoint(row, column, current.rows, current.columns)) return
+    const steps = current.guideSteps ?? []
+    const existingIndex = steps.findIndex(
+      (step) => step.row === row && step.column === column,
+    )
+    const guideSteps = existingIndex >= 0
+      ? steps.filter((_, index) => index !== existingIndex)
+      : [...steps, { row, column }]
+    const next = { ...current, guideSteps }
+    documentRef.current = next
+    setDocument(next)
+  }, [])
+
+  const handleGuideStepsAdd = useCallback((positions: Array<[number, number]>) => {
+    if (!positions.length) return
+    setShowGuideSteps(true)
+    const current = documentRef.current
+    const steps = current.guideSteps ?? []
+    const existing = new Set(steps.map((step) => `${step.row}:${step.column}`))
+    const additions = positions.flatMap(([row, column]) => {
+      if (!isNumberableGuidePoint(row, column, current.rows, current.columns)) return []
+      const key = `${row}:${column}`
+      if (existing.has(key)) return []
+      existing.add(key)
+      return [{ row, column }]
     })
+    if (!additions.length) return
+    const next = { ...current, guideSteps: [...steps, ...additions] }
+    documentRef.current = next
+    setDocument(next)
   }, [])
 
   const clearGuideSteps = () => {
@@ -366,7 +864,7 @@ function App() {
       return
     }
 
-    const result = generateAutomaticGuide(current)
+    const result = generateAutomaticGuide(current, guideStartDirection)
     if (!result.steps.length) {
       setNotice('Pinta las cuatro cuentas de al menos una cruz para generar el recorrido.')
       return
@@ -377,12 +875,17 @@ function App() {
     setDocument(next)
     setShowGuideSteps(true)
 
-    if (result.componentCount > 1) {
+    if (!result.continuous) {
+      const sectionDetail = result.componentCount > 1
+        ? ` en ${result.componentCount} secciones`
+        : ''
       setNotice(
-        `Se numeraron ${result.steps.length} pasos en ${result.componentCount} secciones. Revisa los saltos en modo manual.`,
+        `Se numeraron ${result.steps.length} pasos desde ${GUIDE_START_LABELS[guideStartDirection]}${sectionDetail}. El recorrido contiene al menos un salto entre ramas; puedes ajustarlo en modo manual.`,
       )
     } else {
-      setNotice(`Numeración horizontal generada con ${result.steps.length} pasos.`)
+      setNotice(
+        `Recorrido desde ${GUIDE_START_LABELS[guideStartDirection]} generado con ${result.steps.length} pasos.`,
+      )
     }
   }
 
@@ -414,7 +917,7 @@ function App() {
         )
         const width = image.naturalWidth * baseScale
         const height = image.naturalHeight * baseScale
-        setTraceImage({
+        const nextTraceImage: TraceImage = {
           src: source,
           name: file.name,
           naturalWidth: image.naturalWidth,
@@ -425,7 +928,10 @@ function App() {
           y: (pattern.height - height) / 2,
           opacity: 0.45,
           visible: true,
-        })
+        }
+        traceImageRef.current = nextTraceImage
+        referenceModeRef.current = 'floating'
+        setTraceImage(nextTraceImage)
         setReferenceMode('floating')
         setTool('paint')
         setNotice('Referencia agregada en una ventana flotante.')
@@ -436,17 +942,29 @@ function App() {
   }
 
   const updateTraceImage = (patch: Partial<TraceImage>) => {
-    setTraceImage((current) => (current ? { ...current, ...patch } : current))
+    setTraceImage((current) => {
+      const next = current ? { ...current, ...patch } : current
+      traceImageRef.current = next
+      return next
+    })
   }
 
   const removeTraceImage = () => {
+    traceImageRef.current = null
+    referenceModeRef.current = 'floating'
     setTraceImage(null)
+    setReferenceMode('floating')
     if (tool === 'trace') setTool('paint')
   }
 
   const changeReferenceMode = (mode: ReferenceMode) => {
+    referenceModeRef.current = mode
     setReferenceMode(mode)
-    setTraceImage((current) => (current ? { ...current, visible: true } : current))
+    setTraceImage((current) => {
+      const next = current ? { ...current, visible: true } : current
+      traceImageRef.current = next
+      return next
+    })
     if (mode === 'floating' && tool === 'trace') setTool('paint')
   }
 
@@ -499,6 +1017,11 @@ function App() {
           onTraceUpload={handleTraceUpload}
           onTraceChange={updateTraceImage}
           onTraceRemove={removeTraceImage}
+          onExport={() => {
+            const exported = exportPatternPng(document, showGuideSteps)
+            if (!exported) setNotice('Pinta al menos una cuenta antes de exportar.')
+          }}
+          onClearDesign={clearPattern}
         />
       </header>
 
@@ -507,17 +1030,16 @@ function App() {
           tool={tool}
           onToolChange={setTool}
           color={color}
+          presetColors={documentPaletteColors}
           onColorChange={(nextColor) => {
             setColor(nextColor)
             setTool('paint')
           }}
-          onSaveProject={handleSaveProject}
-          onOpenProject={handleOpenProject}
-          onExport={() => exportPatternPng(document, showGuideSteps)}
-          onClear={clearPattern}
           guideStepCount={guideStepCount}
           numberingMode={numberingMode}
           onNumberingModeChange={setNumberingMode}
+          guideStartDirection={guideStartDirection}
+          onGuideStartDirectionChange={setGuideStartDirection}
           onGenerateGuide={generateGuideSteps}
           showGuideSteps={showGuideSteps}
           onGuideVisibilityChange={setShowGuideSteps}
@@ -526,11 +1048,62 @@ function App() {
 
         <section className="canvas-area" aria-label="Área de trabajo">
           <div className="canvas-topbar">
-            <div className="canvas-command-group" aria-label="Edición del documento">
-              <span className="document-meta">
-                {gridDimensionToBeadCount(document.columns)} ×{' '}
-                {gridDimensionToBeadCount(document.rows)}
-              </span>
+            <div className="canvas-topbar-scroll">
+              <div className="canvas-command-group" aria-label="Archivo y documento">
+                <span className="document-meta">
+                  {gridDimensionToBeadCount(document.columns)} ×{' '}
+                  {gridDimensionToBeadCount(document.rows)}
+                </span>
+                <button type="button" className="topbar-action" onClick={handleSaveProject} title="Guardar proyecto">
+                  <InterfaceIcon name="save" />
+                  <span>Guardar</span>
+                </button>
+                <button
+                  type="button"
+                  className="topbar-action"
+                  onClick={() => projectInputRef.current?.click()}
+                  title="Abrir proyecto"
+                >
+                  <InterfaceIcon name="open" />
+                  <span>Abrir</span>
+                </button>
+                <input
+                  ref={projectInputRef}
+                  className="project-file-input"
+                  type="file"
+                  accept=".beadstudio,application/json"
+                  tabIndex={-1}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) void handleOpenProject(file)
+                    event.currentTarget.value = ''
+                  }}
+                />
+                <button
+                  type="button"
+                  className="topbar-action"
+                  onClick={() => imageInputRef.current?.click()}
+                  title="Convertir imagen"
+                >
+                  <InterfaceIcon name="scan" />
+                  <span>Convertir imagen</span>
+                </button>
+                <input
+                  ref={imageInputRef}
+                  className="project-file-input"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  tabIndex={-1}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) void handleAnalyzeImage(file)
+                    event.currentTarget.value = ''
+                  }}
+                />
+              </div>
+
+              <span className="topbar-divider" aria-hidden="true" />
+
               <div className="history-controls" role="group" aria-label="Historial de edición">
                 <button
                   type="button"
@@ -559,6 +1132,12 @@ function App() {
                   </svg>
                 </button>
               </div>
+
+              <span className="topbar-divider" aria-hidden="true" />
+
+              <div className="topbar-tools" role="toolbar" aria-label="Herramientas de diseño">
+                <DesignToolButtons tool={tool} onToolChange={setTool} />
+              </div>
             </div>
             <div className="zoom-controls" aria-label="Controles de zoom">
               <button type="button" onClick={() => canvasRef.current?.zoomOut()} aria-label="Alejar">−</button>
@@ -586,6 +1165,7 @@ function App() {
               onPaint={handlePaint}
               onMoveSelection={handleMoveSelection}
               onGuideStepToggle={handleGuideStepToggle}
+              onGuideStepsAdd={handleGuideStepsAdd}
               numberingMode={numberingMode}
               showGuideSteps={showGuideSteps}
               onStrokeStart={handleStrokeStart}
@@ -620,6 +1200,29 @@ function App() {
           </footer>
         </section>
       </div>
+
+      <ImageImportDialog
+        open={imageImport !== null}
+        source={imageImport?.prepared?.source ?? ''}
+        fileName={imageImport?.fileName ?? ''}
+        result={effectiveImportResult}
+        analyzing={imageImport?.analyzing ?? false}
+        error={imageImport?.error ?? null}
+        backgroundMode={imageImport?.options.backgroundMode ?? 'auto'}
+        backgroundTolerance={imageImport?.options.backgroundTolerance ?? 14}
+        colorMergeDelta={imageImport?.options.colorMergeDeltaE ?? 8}
+        onBackgroundModeChange={handleImportBackgroundMode}
+        onBackgroundToleranceChange={(backgroundTolerance) =>
+          updateImageAnalysisOptions({ backgroundTolerance })
+        }
+        onColorMergeDeltaChange={(colorMergeDeltaE) =>
+          updateImageAnalysisOptions({ colorMergeDeltaE })
+        }
+        onPickBackground={handlePickImportBackground}
+        onToggleCell={handleToggleImportedCell}
+        onCancel={cancelImageImport}
+        onConfirm={confirmImageImport}
+      />
 
       {notice && (
         <div className="toast" role="status">

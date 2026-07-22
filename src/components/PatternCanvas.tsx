@@ -22,6 +22,7 @@ import {
   screenToWorld,
 } from '../lib/geometry'
 import { drawGuideSteps, drawPatternContent } from '../lib/exportPattern'
+import { collectGuidePointsAlongSegment } from '../lib/guideDrag'
 import {
   getTraceImageSize,
   type MirrorMode,
@@ -36,6 +37,7 @@ export interface PatternCanvasHandle {
   zoomIn: () => void
   zoomOut: () => void
   fit: () => void
+  preserveViewForGrid: (rows: number, columns: number) => void
 }
 
 interface PatternCanvasProps {
@@ -48,6 +50,7 @@ interface PatternCanvasProps {
   onPaint: (positions: Array<[number, number]>, color: string | null) => void
   onMoveSelection: (selectedKeys: string[], rowDelta: number, columnDelta: number) => void
   onGuideStepToggle: (row: number, column: number) => void
+  onGuideStepsAdd: (positions: Array<[number, number]>) => void
   numberingMode: NumberingMode
   showGuideSteps: boolean
   onStrokeStart: () => void
@@ -56,7 +59,7 @@ interface PatternCanvasProps {
 }
 
 interface PointerInteraction {
-  kind: 'paint' | 'pan' | 'trace' | 'select-box' | 'move-selection'
+  kind: 'paint' | 'pan' | 'trace' | 'select-box' | 'move-selection' | 'guide'
   pointerId: number
   lastScreenX: number
   lastScreenY: number
@@ -69,6 +72,8 @@ interface PointerInteraction {
   selectionAtStart: Set<string>
   moveRowDelta: number
   moveColumnDelta: number
+  guideStartPoint?: [number, number] | null
+  hasDragged?: boolean
 }
 
 const INITIAL_VIEW: ViewTransform = { scale: 1, offsetX: 0, offsetY: 0 }
@@ -129,6 +134,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       onPaint,
       onMoveSelection,
       onGuideStepToggle,
+      onGuideStepsAdd,
       numberingMode,
       showGuideSteps,
       onStrokeStart,
@@ -205,6 +211,9 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         zoomIn: () => zoomAtCenter(1.2),
         zoomOut: () => zoomAtCenter(1 / 1.2),
         fit,
+        preserveViewForGrid: (rows, columns) => {
+          previousGridRef.current = { rows, columns }
+        },
       }),
       [fit, zoomAtCenter],
     )
@@ -299,8 +308,10 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       context.strokeStyle = 'rgba(79, 74, 68, 0.13)'
       context.lineWidth = 1 / view.scale
       context.strokeRect(0, 0, patternSize.width, patternSize.height)
-      drawPatternContent(context, document, { fillEmptyBeads: !traceImage?.visible })
-      if (showGuideSteps) drawGuideSteps(context, document)
+      drawPatternContent(context, document, {
+        fillEmptyBeads: !traceImage?.visible,
+        showPaintedBeads: false,
+      })
 
       if (mirrorMode !== 'none') {
         context.save()
@@ -347,6 +358,9 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         }
         context.restore()
       }
+
+      drawPatternContent(context, document, { showEmptyBeads: false })
+      if (showGuideSteps) drawGuideSteps(context, document)
 
       if (tool === 'trace' && traceImage?.visible) {
         const traceSize = getTraceImageSize(traceImage)
@@ -430,6 +444,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         target instanceof HTMLSelectElement
 
       const handleKeyDown = (event: KeyboardEvent) => {
+        if (window.document.querySelector('dialog[open]')) return
         if (isEditableTarget(event.target)) return
         if (tool === 'select' && event.key === 'Escape') {
           setSelectedKeys(new Set())
@@ -526,7 +541,25 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
             document.rows,
             document.columns,
           )
-          if (guidePoint) onGuideStepToggle(guidePoint[0], guidePoint[1])
+          onStrokeStart()
+          interactionRef.current = {
+            kind: 'guide',
+            pointerId: event.pointerId,
+            lastScreenX: event.clientX,
+            lastScreenY: event.clientY,
+            lastWorldX: world.x,
+            lastWorldY: world.y,
+            eraseOverride: false,
+            visited: new Set(),
+            startWorldX: world.x,
+            startWorldY: world.y,
+            selectionAtStart: new Set(),
+            moveRowDelta: 0,
+            moveColumnDelta: 0,
+            guideStartPoint: guidePoint,
+            hasDragged: false,
+          }
+          return
         }
         canvas.releasePointerCapture(event.pointerId)
         return
@@ -644,6 +677,32 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       const rect = canvas.getBoundingClientRect()
       const world = screenToWorld(event.clientX, event.clientY, rect, viewRef.current)
 
+      if (interaction.kind === 'guide') {
+        if (
+          !interaction.hasDragged &&
+          Math.hypot(
+            event.clientX - interaction.lastScreenX,
+            event.clientY - interaction.lastScreenY,
+          ) < 3
+        ) {
+          return
+        }
+        interaction.hasDragged = true
+        const positions = collectGuidePointsAlongSegment(
+          { x: interaction.lastWorldX, y: interaction.lastWorldY },
+          world,
+          document.rows,
+          document.columns,
+          interaction.visited,
+        )
+        if (positions.length) onGuideStepsAdd(positions)
+        interaction.lastScreenX = event.clientX
+        interaction.lastScreenY = event.clientY
+        interaction.lastWorldX = world.x
+        interaction.lastWorldY = world.y
+        return
+      }
+
       if (interaction.kind === 'select-box') {
         const left = Math.min(interaction.startWorldX, world.x)
         const right = Math.max(interaction.startWorldX, world.x)
@@ -716,6 +775,19 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       const interaction = interactionRef.current
       if (!interaction || interaction.pointerId !== event.pointerId) return
       if (interaction.kind === 'paint') onStrokeEnd()
+      if (interaction.kind === 'guide') {
+        if (
+          event.type === 'pointerup' &&
+          !interaction.hasDragged &&
+          interaction.guideStartPoint
+        ) {
+          onGuideStepToggle(
+            interaction.guideStartPoint[0],
+            interaction.guideStartPoint[1],
+          )
+        }
+        onStrokeEnd()
+      }
       if (interaction.kind === 'move-selection') {
         if (interaction.moveRowDelta !== 0 || interaction.moveColumnDelta !== 0) {
           onMoveSelection(

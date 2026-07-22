@@ -1,5 +1,5 @@
-import { useRef, type ReactNode } from 'react'
-import type { NumberingMode, ToolMode } from '../types'
+import { useState, type ReactNode } from 'react'
+import type { GuideStartDirection, NumberingMode, ToolMode } from '../types'
 
 const PALETTE = [
   '#111827',
@@ -14,7 +14,7 @@ const PALETTE = [
   '#f8fafc',
 ]
 
-type InterfaceIconName =
+export type InterfaceIconName =
   | 'brush'
   | 'eraser'
   | 'select'
@@ -22,6 +22,7 @@ type InterfaceIconName =
   | 'number'
   | 'save'
   | 'open'
+  | 'scan'
   | 'export'
   | 'trash'
 
@@ -40,25 +41,35 @@ const TOOLS: Array<{
 
 const RAIL_TOOLS = TOOLS.filter((item) => item.id !== 'number')
 
+const GUIDE_START_OPTIONS: Array<{
+  id: GuideStartDirection
+  label: string
+  arrow: string
+}> = [
+  { id: 'left', label: 'Izquierda', arrow: '←' },
+  { id: 'right', label: 'Derecha', arrow: '→' },
+  { id: 'top', label: 'Arriba', arrow: '↑' },
+  { id: 'bottom', label: 'Abajo', arrow: '↓' },
+]
+
 interface ToolbarProps {
   tool: ToolMode
   onToolChange: (tool: ToolMode) => void
   color: string
+  presetColors: string[]
   onColorChange: (color: string) => void
-  onSaveProject: () => void
-  onOpenProject: (file: File) => void
-  onExport: () => void
-  onClear: () => void
   guideStepCount: number
   numberingMode: NumberingMode
   onNumberingModeChange: (mode: NumberingMode) => void
+  guideStartDirection: GuideStartDirection
+  onGuideStartDirectionChange: (direction: GuideStartDirection) => void
   onGenerateGuide: () => void
   showGuideSteps: boolean
   onGuideVisibilityChange: (visible: boolean) => void
   onClearGuide: () => void
 }
 
-function InterfaceIcon({ name }: { name: InterfaceIconName }) {
+export function InterfaceIcon({ name }: { name: InterfaceIconName }) {
   return (
     <svg className="interface-icon" viewBox="0 0 24 24" aria-hidden="true">
       {name === 'brush' && (
@@ -104,6 +115,13 @@ function InterfaceIcon({ name }: { name: InterfaceIconName }) {
           <path d="m8 13 4-4 4 4M12 9v8" />
         </>
       )}
+      {name === 'scan' && (
+        <>
+          <path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" />
+          <ellipse cx="12" cy="12" rx="5" ry="3.4" />
+          <path d="M12 8.6v6.8" />
+        </>
+      )}
       {name === 'export' && (
         <>
           <path d="M5 14v6h14v-6M12 3v12M7.5 10.5 12 15l4.5-4.5" />
@@ -118,6 +136,29 @@ function InterfaceIcon({ name }: { name: InterfaceIconName }) {
   )
 }
 
+export function DesignToolButtons({
+  tool,
+  onToolChange,
+}: {
+  tool: ToolMode
+  onToolChange: (tool: ToolMode) => void
+}) {
+  return RAIL_TOOLS.map((item) => (
+    <button
+      key={item.id}
+      type="button"
+      className={`topbar-tool-button ${tool === item.id ? 'is-active' : ''}`}
+      onClick={() => onToolChange(item.id)}
+      aria-label={`${item.label} (${item.shortcut})`}
+      aria-keyshortcuts={item.shortcut}
+      aria-pressed={tool === item.id}
+      title={`${item.label} (${item.shortcut})`}
+    >
+      <InterfaceIcon name={item.icon} />
+    </button>
+  ))
+}
+
 function SectionTitle({ children }: { children: ReactNode }) {
   return <h2 className="panel-title">{children}</h2>
 }
@@ -126,66 +167,25 @@ export function Toolbar({
   tool,
   onToolChange,
   color,
+  presetColors,
   onColorChange,
-  onSaveProject,
-  onOpenProject,
-  onExport,
-  onClear,
   guideStepCount,
   numberingMode,
   onNumberingModeChange,
+  guideStartDirection,
+  onGuideStartDirectionChange,
   onGenerateGuide,
   showGuideSteps,
   onGuideVisibilityChange,
   onClearGuide,
 }: ToolbarProps) {
-  const projectInputRef = useRef<HTMLInputElement>(null)
-  const activeTool = TOOLS.find((item) => item.id === tool)
+  const [showAllColors, setShowAllColors] = useState(false)
+  const paletteColors = [...new Set([...presetColors, ...PALETTE].map((item) => item.toLowerCase()))]
+  const visiblePaletteColors = showAllColors ? paletteColors : paletteColors.slice(0, 10)
+  const hasHiddenColors = paletteColors.length > 10
 
   return (
-    <>
-      <aside className="tool-rail" aria-label="Barra de herramientas">
-        <div className="tool-rail-buttons" role="toolbar" aria-orientation="vertical">
-          {RAIL_TOOLS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`rail-tool-button ${tool === item.id ? 'is-active' : ''}`}
-              onClick={() => onToolChange(item.id)}
-              aria-label={`${item.label} (${item.shortcut})`}
-              aria-keyshortcuts={item.shortcut}
-              aria-pressed={tool === item.id}
-              title={`${item.label} (${item.shortcut})`}
-            >
-              <InterfaceIcon name={item.icon} />
-              <span className="rail-tool-tooltip" aria-hidden="true">
-                {item.label}
-                <kbd>{item.shortcut}</kbd>
-              </span>
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          className="rail-color-button"
-          onClick={() => onToolChange('paint')}
-          aria-label={`Color activo ${color}`}
-          title={`Color activo: ${color.toUpperCase()}`}
-        >
-          <span className="rail-color-back" />
-          <span className="rail-color-front" style={{ backgroundColor: color }} />
-        </button>
-      </aside>
-
-      <aside className="tool-panel inspector-panel" aria-label="Propiedades de la herramienta">
-        <div className="inspector-heading">
-          <div>
-            <span>Propiedades</span>
-            <strong>{activeTool?.label ?? 'Referencia'}</strong>
-          </div>
-          {activeTool && <InterfaceIcon name={activeTool.icon} />}
-        </div>
-
+    <aside className="tool-panel inspector-panel" aria-label="Propiedades de la herramienta">
         <div className="tool-panel-scroll">
           <section className="panel-section first-section">
             <SectionTitle>Color activo</SectionTitle>
@@ -201,7 +201,7 @@ export function Toolbar({
               />
             </label>
             <div className="palette" aria-label="Paleta de colores">
-              {PALETTE.map((paletteColor) => (
+              {visiblePaletteColors.map((paletteColor) => (
                 <button
                   type="button"
                   key={paletteColor}
@@ -215,6 +215,21 @@ export function Toolbar({
                 </button>
               ))}
             </div>
+            {hasHiddenColors && (
+              <button
+                type="button"
+                className="palette-toggle"
+                onClick={() => setShowAllColors((current) => !current)}
+                aria-expanded={showAllColors}
+              >
+                <span>
+                  {showAllColors
+                    ? 'Ocultar colores adicionales'
+                    : `Mostrar ${paletteColors.length - 10} ${paletteColors.length - 10 === 1 ? 'color más' : 'colores más'}`}
+                </span>
+                <span className="palette-toggle-chevron" aria-hidden="true" />
+              </button>
+            )}
           </section>
 
           <section className={`panel-section guide-panel ${tool === 'number' ? 'is-expanded' : ''}`}>
@@ -247,10 +262,34 @@ export function Toolbar({
                   </button>
                 </div>
                 {numberingMode === 'manual' ? (
-                  <p>Haz clic entre las cuentas siguiendo el recorrido del hilo.</p>
+                  <p>Haz clic o arrastra entre las cuentas siguiendo el recorrido del hilo.</p>
                 ) : (
                   <>
-                    <p>Genera el recorrido por filas horizontales alternadas.</p>
+                    <p>Prioriza pasos vecinos y completa cada bloque antes de pasar al siguiente.</p>
+                    <div className="guide-start-setting">
+                      <span className="guide-start-label">Comenzar desde</span>
+                      <div
+                        className="guide-start-switch"
+                        role="radiogroup"
+                        aria-label="Lado de inicio del recorrido"
+                      >
+                        {GUIDE_START_OPTIONS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            role="radio"
+                            className={guideStartDirection === option.id ? 'is-active' : ''}
+                            aria-checked={guideStartDirection === option.id}
+                            onClick={() => onGuideStartDirectionChange(option.id)}
+                          >
+                            <span className="guide-start-arrow" aria-hidden="true">
+                              {option.arrow}
+                            </span>
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <button type="button" className="generate-guide-button" onClick={onGenerateGuide}>
                       {guideStepCount ? 'Volver a generar' : 'Generar recorrido'}
                     </button>
@@ -275,44 +314,6 @@ export function Toolbar({
           </section>
         </div>
 
-        <div className="panel-actions">
-          <span className="panel-actions-label">Documento</span>
-          <div className="project-action-grid">
-            <button type="button" className="secondary-button project-button" onClick={onSaveProject}>
-              <InterfaceIcon name="save" />
-              Guardar
-            </button>
-            <button
-              type="button"
-              className="secondary-button project-button project-open-button"
-              onClick={() => projectInputRef.current?.click()}
-            >
-              <InterfaceIcon name="open" />
-              Abrir
-            </button>
-            <input
-              ref={projectInputRef}
-              className="project-file-input"
-              type="file"
-              accept=".beadstudio,application/json"
-              tabIndex={-1}
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) onOpenProject(file)
-                event.currentTarget.value = ''
-              }}
-            />
-          </div>
-          <button type="button" className="primary-button" onClick={onExport}>
-            <InterfaceIcon name="export" />
-            Exportar PNG
-          </button>
-          <button type="button" className="clear-button" onClick={onClear}>
-            <InterfaceIcon name="trash" />
-            Limpiar diseño
-          </button>
-        </div>
-      </aside>
-    </>
+    </aside>
   )
 }

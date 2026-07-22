@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { InterfaceIcon } from './Toolbar'
 import type {
   BackgroundMode,
   MirrorMode,
@@ -27,6 +28,8 @@ interface HeaderControlsProps {
   onTraceUpload: (file: File) => void
   onTraceChange: (patch: Partial<TraceImage>) => void
   onTraceRemove: () => void
+  onExport: () => void
+  onClearDesign: () => void
 }
 
 interface EditableNumberInputProps {
@@ -85,6 +88,8 @@ export function HeaderControls({
   onTraceUpload,
   onTraceChange,
   onTraceRemove,
+  onExport,
+  onClearDesign,
 }: HeaderControlsProps) {
   const [traceOpen, setTraceOpen] = useState(false)
 
@@ -350,6 +355,30 @@ export function HeaderControls({
             aria-label="Color de fondo"
           />
         </div>
+      </section>
+
+      <section
+        className="header-control-group header-document-actions"
+        aria-label="Exportación y limpieza del diseño"
+      >
+        <button
+          type="button"
+          className="topbar-action is-primary"
+          onClick={onExport}
+          title="Exportar PNG"
+        >
+          <InterfaceIcon name="export" />
+          <span>Exportar PNG</span>
+        </button>
+        <button
+          type="button"
+          className="topbar-action is-danger"
+          onClick={onClearDesign}
+          title="Limpiar diseño"
+        >
+          <InterfaceIcon name="trash" />
+          <span>Limpiar diseño</span>
+        </button>
       </section>
     </div>
   )
