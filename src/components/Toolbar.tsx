@@ -24,6 +24,8 @@ export type InterfaceIconName =
   | 'open'
   | 'scan'
   | 'export'
+  | 'fullscreen'
+  | 'fullscreen-exit'
   | 'trash'
 
 const TOOLS: Array<{
@@ -125,6 +127,16 @@ export function InterfaceIcon({ name }: { name: InterfaceIconName }) {
       {name === 'export' && (
         <>
           <path d="M5 14v6h14v-6M12 3v12M7.5 10.5 12 15l4.5-4.5" />
+        </>
+      )}
+      {name === 'fullscreen' && (
+        <>
+          <path d="M9 4H4v5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+        </>
+      )}
+      {name === 'fullscreen-exit' && (
+        <>
+          <path d="M4 9h5V4M20 9h-5V4M15 20v-5h5M9 20v-5H4" />
         </>
       )}
       {name === 'trash' && (
@@ -262,7 +274,7 @@ export function Toolbar({
                   </button>
                 </div>
                 {numberingMode === 'manual' ? (
-                  <p>Haz clic o arrastra entre las cuentas siguiendo el recorrido del hilo.</p>
+                  <p>Añade pasos con clic o arrastre. Elimínalos con clic derecho o arrastre derecho.</p>
                 ) : (
                   <>
                     <p>Prioriza pasos vecinos y completa cada bloque antes de pasar al siguiente.</p>

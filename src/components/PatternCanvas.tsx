@@ -54,8 +54,8 @@ interface PatternCanvasProps {
   onTraceMove: (deltaX: number, deltaY: number) => void
   onPaint: (positions: Array<[number, number]>, color: string | null) => void
   onMoveSelection: (selectedKeys: string[], rowDelta: number, columnDelta: number) => void
-  onGuideStepToggle: (row: number, column: number) => void
   onGuideStepsAdd: (positions: Array<[number, number]>) => void
+  onGuideStepsRemove: (positions: Array<[number, number]>) => void
   numberingMode: NumberingMode
   showGuideSteps: boolean
   onStrokeStart: () => void
@@ -138,8 +138,8 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       onTraceMove,
       onPaint,
       onMoveSelection,
-      onGuideStepToggle,
       onGuideStepsAdd,
+      onGuideStepsRemove,
       numberingMode,
       showGuideSteps,
       onStrokeStart,
@@ -457,7 +457,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       const guideRoute = getGuideRouteAnimation(document)
       const canAnimate = () =>
         showGuideSteps &&
-        guideRoute.length > 0 &&
+        guideRoute.points.length > 0 &&
         !motionPreference.matches
       let animationFrame = 0
 
@@ -587,7 +587,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         world.y <= traceImage.y + traceSize.height
 
       if (!shouldPan && tool === 'number') {
-        if (numberingMode === 'manual' && event.button === 0) {
+        if (numberingMode === 'manual' && (event.button === 0 || event.button === 2)) {
           const guidePoint = hitTestGuidePoint(
             world.x,
             world.y,
@@ -602,7 +602,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
             lastScreenY: event.clientY,
             lastWorldX: world.x,
             lastWorldY: world.y,
-            eraseOverride: false,
+            eraseOverride: event.button === 2,
             visited: new Set(),
             startWorldX: world.x,
             startWorldY: world.y,
@@ -748,7 +748,10 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           document.columns,
           interaction.visited,
         )
-        if (positions.length) onGuideStepsAdd(positions)
+        if (positions.length) {
+          if (interaction.eraseOverride) onGuideStepsRemove(positions)
+          else onGuideStepsAdd(positions)
+        }
         interaction.lastScreenX = event.clientX
         interaction.lastScreenY = event.clientY
         interaction.lastWorldX = world.x
@@ -834,10 +837,9 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           !interaction.hasDragged &&
           interaction.guideStartPoint
         ) {
-          onGuideStepToggle(
-            interaction.guideStartPoint[0],
-            interaction.guideStartPoint[1],
-          )
+          const positions: Array<[number, number]> = [interaction.guideStartPoint]
+          if (interaction.eraseOverride) onGuideStepsRemove(positions)
+          else onGuideStepsAdd(positions)
         }
         onStrokeEnd()
       }

@@ -224,6 +224,7 @@ function App() {
   const [numberingMode, setNumberingMode] = useState<NumberingMode>('manual')
   const [guideStartDirection, setGuideStartDirection] =
     useState<GuideStartDirection>('top')
+  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false)
   const [imageImport, setImageImport] = useState<ImageImportSession | null>(null)
   const hasTraceImage = traceImage !== null
   const guideStepCount = document.guideSteps?.length ?? 0
@@ -233,6 +234,7 @@ function App() {
     [document.cells],
   )
   const canvasRef = useRef<PatternCanvasHandle>(null)
+  const canvasAreaRef = useRef<HTMLElement>(null)
   const projectInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const documentRef = useRef(document)
@@ -304,6 +306,32 @@ function App() {
   useEffect(() => {
     referenceModeRef.current = referenceMode
   }, [referenceMode])
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsCanvasFullscreen(window.document.fullscreenElement === canvasAreaRef.current)
+      window.requestAnimationFrame(() => canvasRef.current?.fit())
+    }
+    window.document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => window.document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
+  const toggleCanvasFullscreen = useCallback(async () => {
+    const canvasArea = canvasAreaRef.current
+    if (!canvasArea || !canvasArea.requestFullscreen) {
+      setNotice('La pantalla completa no está disponible en este navegador.')
+      return
+    }
+    try {
+      if (window.document.fullscreenElement === canvasArea) {
+        await window.document.exitFullscreen()
+      } else {
+        await canvasArea.requestFullscreen()
+      }
+    } catch {
+      setNotice('No fue posible mostrar el lienzo en pantalla completa.')
+    }
+  }, [])
 
   useEffect(() => {
     if (!preparedImport || !importOptions) return
@@ -809,22 +837,6 @@ function App() {
     setNotice('El patrón quedó limpio.')
   }
 
-  const handleGuideStepToggle = useCallback((row: number, column: number) => {
-    setShowGuideSteps(true)
-    const current = documentRef.current
-    if (!isNumberableGuidePoint(row, column, current.rows, current.columns)) return
-    const steps = current.guideSteps ?? []
-    const existingIndex = steps.findIndex(
-      (step) => step.row === row && step.column === column,
-    )
-    const guideSteps = existingIndex >= 0
-      ? steps.filter((_, index) => index !== existingIndex)
-      : [...steps, { row, column }]
-    const next = { ...current, guideSteps }
-    documentRef.current = next
-    setDocument(next)
-  }, [])
-
   const handleGuideStepsAdd = useCallback((positions: Array<[number, number]>) => {
     if (!positions.length) return
     setShowGuideSteps(true)
@@ -840,6 +852,18 @@ function App() {
     })
     if (!additions.length) return
     const next = { ...current, guideSteps: [...steps, ...additions] }
+    documentRef.current = next
+    setDocument(next)
+  }, [])
+
+  const handleGuideStepsRemove = useCallback((positions: Array<[number, number]>) => {
+    if (!positions.length) return
+    const current = documentRef.current
+    const removals = new Set(positions.map(([row, column]) => `${row}:${column}`))
+    const steps = current.guideSteps ?? []
+    const guideSteps = steps.filter((step) => !removals.has(`${step.row}:${step.column}`))
+    if (guideSteps.length === steps.length) return
+    const next = { ...current, guideSteps }
     documentRef.current = next
     setDocument(next)
   }, [])
@@ -1046,7 +1070,7 @@ function App() {
           onClearGuide={clearGuideSteps}
         />
 
-        <section className="canvas-area" aria-label="Área de trabajo">
+        <section ref={canvasAreaRef} className="canvas-area" aria-label="Área de trabajo">
           <div className="canvas-topbar">
             <div className="canvas-topbar-scroll">
               <div className="canvas-command-group" aria-label="Archivo y documento">
@@ -1146,6 +1170,16 @@ function App() {
               <button type="button" className="fit-button" onClick={() => canvasRef.current?.fit()}>
                 Ajustar
               </button>
+              <button
+                type="button"
+                className="fullscreen-button"
+                onClick={() => void toggleCanvasFullscreen()}
+                aria-label={isCanvasFullscreen ? 'Salir de pantalla completa' : 'Ver lienzo en pantalla completa'}
+                aria-pressed={isCanvasFullscreen}
+                title={isCanvasFullscreen ? 'Salir de pantalla completa (Esc)' : 'Pantalla completa'}
+              >
+                <InterfaceIcon name={isCanvasFullscreen ? 'fullscreen-exit' : 'fullscreen'} />
+              </button>
             </div>
           </div>
 
@@ -1164,8 +1198,8 @@ function App() {
               }}
               onPaint={handlePaint}
               onMoveSelection={handleMoveSelection}
-              onGuideStepToggle={handleGuideStepToggle}
               onGuideStepsAdd={handleGuideStepsAdd}
+              onGuideStepsRemove={handleGuideStepsRemove}
               numberingMode={numberingMode}
               showGuideSteps={showGuideSteps}
               onStrokeStart={handleStrokeStart}

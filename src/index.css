@@ -1564,6 +1564,22 @@ kbd {
   border-color: var(--ui-border);
 }
 
+.zoom-controls .fullscreen-button {
+  margin-left: 2px;
+  border-color: var(--ui-border);
+}
+
+.zoom-controls .fullscreen-button .interface-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.canvas-area:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  background: var(--ui-stage);
+}
+
 .canvas-stage {
   position: relative;
   min-height: 0;

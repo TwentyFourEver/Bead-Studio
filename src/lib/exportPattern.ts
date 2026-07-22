@@ -13,6 +13,7 @@ interface RenderOptions {
   scale?: number
   includeShadow?: boolean
   showGuideSteps?: boolean
+  showGuideRoute?: boolean
   viewport?: PatternBounds
 }
 
@@ -36,6 +37,10 @@ export interface GuideRouteAnimation {
 const EXPORT_CONTENT_MARGIN = 2
 const GUIDE_FLOW_DASH_LENGTH = 14
 const GUIDE_FLOW_SPEED = 30
+const GUIDE_START_FILL = '#2f8f5b'
+const GUIDE_START_STROKE = '#226b43'
+const GUIDE_END_FILL = '#9a472f'
+const GUIDE_END_STROKE = '#743321'
 
 export function getGuideRoutePoints(document: PatternDocument): GuideRoutePoint[] {
   return (document.guideSteps ?? [])
@@ -122,7 +127,9 @@ export function renderPattern(
   }
 
   drawPatternContent(context, document, { showEmptyBeads: false })
-  if (options.showGuideSteps !== false) drawGuideSteps(context, document)
+  if (options.showGuideSteps !== false) {
+    drawGuideSteps(context, document, { showRoute: options.showGuideRoute })
+  }
   context.restore()
 }
 
@@ -181,6 +188,7 @@ export function drawPatternContent(
 export function drawGuideSteps(
   context: CanvasRenderingContext2D,
   document: PatternDocument,
+  options: { showRoute?: boolean } = {},
 ) {
   const steps = (document.guideSteps ?? []).filter((step) =>
     isNumberableGuidePoint(step.row, step.column, document.rows, document.columns),
@@ -190,7 +198,7 @@ export function drawGuideSteps(
   const routePoints = getGuideRoutePoints(document)
 
   context.save()
-  if (routePoints.length > 1) {
+  if (options.showRoute !== false && routePoints.length > 1) {
     context.lineCap = 'round'
     context.lineJoin = 'round'
 
@@ -215,14 +223,24 @@ export function drawGuideSteps(
     const centerX = PATTERN_PADDING + step.column * GRID_STEP
     const centerY = PATTERN_PADDING + step.row * GRID_STEP
     const width = Math.max(13, context.measureText(label).width + 5)
+    const isStart = index === 0
+    const isEnd = steps.length > 1 && index === steps.length - 1
 
     context.beginPath()
     context.roundRect(centerX - width / 2, centerY - 6.5, width, 13, 4)
-    context.fillStyle = index === 0 ? '#9a472f' : 'rgba(255, 255, 255, 0.94)'
+    context.fillStyle = isStart
+      ? GUIDE_START_FILL
+      : isEnd
+        ? GUIDE_END_FILL
+        : 'rgba(255, 255, 255, 0.94)'
     context.fill()
-    context.strokeStyle = index === 0 ? '#743321' : 'rgba(94, 85, 77, 0.55)'
+    context.strokeStyle = isStart
+      ? GUIDE_START_STROKE
+      : isEnd
+        ? GUIDE_END_STROKE
+        : 'rgba(94, 85, 77, 0.55)'
     context.stroke()
-    context.fillStyle = index === 0 ? '#ffffff' : '#282421'
+    context.fillStyle = isStart || isEnd ? '#ffffff' : '#282421'
     context.fillText(label, centerX, centerY + 0.25)
   })
   context.restore()
@@ -233,27 +251,48 @@ export function drawGuideFlow(
   route: GuideRouteAnimation,
   elapsedMilliseconds: number,
 ) {
-  if (route.length === 0) return
+  if (!route.points.length) return
 
   context.save()
-  context.lineCap = 'round'
-  context.lineJoin = 'round'
-  context.setLineDash([5, 9])
-  context.lineDashOffset = -(
-    (elapsedMilliseconds / 1000) * GUIDE_FLOW_SPEED % GUIDE_FLOW_DASH_LENGTH
-  )
-  traceGuideRoute(context, route.points)
-  context.strokeStyle = 'rgba(255, 255, 255, 0.98)'
-  context.lineWidth = 2.4
-  context.shadowColor = 'rgba(255, 255, 255, 0.9)'
-  context.shadowBlur = 3.5
-  context.stroke()
+  if (route.length > 0) {
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    context.setLineDash([5, 9])
+    context.lineDashOffset = -(
+      (elapsedMilliseconds / 1000) * GUIDE_FLOW_SPEED % GUIDE_FLOW_DASH_LENGTH
+    )
+    traceGuideRoute(context, route.points)
+    context.strokeStyle = 'rgba(255, 255, 255, 0.98)'
+    context.lineWidth = 2.4
+    context.shadowColor = 'rgba(255, 255, 255, 0.9)'
+    context.shadowBlur = 3.5
+    context.stroke()
+  }
 
   context.font = '700 9px Inter, system-ui, sans-serif'
   for (let index = 0; index < route.points.length; index += 1) {
     const labelWidth = Math.max(13, context.measureText(String(index + 1)).width + 5)
     const point = route.points[index]
     context.clearRect(point.x - labelWidth / 2 - 1, point.y - 7.5, labelWidth + 2, 15)
+  }
+
+  const pulse = 0.25 + ((Math.sin(elapsedMilliseconds / 180) + 1) / 2) * 0.75
+  const drawEndpointPulse = (index: number, color: string) => {
+    const point = route.points[index]
+    const labelWidth = Math.max(13, context.measureText(String(index + 1)).width + 5)
+    context.beginPath()
+    context.roundRect(point.x - labelWidth / 2 - 2, point.y - 8.5, labelWidth + 4, 17, 6)
+    context.globalAlpha = pulse
+    context.strokeStyle = color
+    context.lineWidth = 2.5
+    context.shadowColor = color
+    context.shadowBlur = 5 + pulse * 4
+    context.stroke()
+  }
+
+  drawEndpointPulse(0, GUIDE_START_FILL)
+  if (route.points.length > 1) {
+    drawEndpointPulse(route.points.length - 1, GUIDE_END_FILL)
   }
   context.restore()
 }
@@ -271,6 +310,7 @@ export function exportPatternPng(document: PatternDocument, showGuideSteps = tru
   renderPattern(context, document, {
     scale: exportScale,
     showGuideSteps,
+    showGuideRoute: false,
     viewport: paintedBounds,
   })
 

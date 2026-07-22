@@ -15,6 +15,10 @@ const ROUTE_NEIGHBORS: ReadonlyArray<readonly [number, number]> = [
 // La comprobación completa de bifurcaciones es cuadrática. Los patrones densos
 // ya usan el barrido lineal; este límite mantiene fluida la alternativa irregular.
 const CONNECTIVITY_LOOKAHEAD_LIMIT = 1200
+// Los recorridos irregulares medianos pueden necesitar deshacer decisiones.
+// Los límites evitan que un caso sin solución bloquee el editor.
+const BACKTRACK_VERTEX_LIMIT = 600
+const BACKTRACK_STATE_LIMIT = 12000
 
 export interface AutomaticGuideResult {
   steps: GuideStep[]
@@ -242,6 +246,191 @@ function countRemainingComponents(
   return componentCount
 }
 
+function routeSweepScore(
+  route: GuideStep[],
+  sweepRank: Map<string, number>,
+) {
+  return route.reduce(
+    (score, step, index) => score + Math.abs((sweepRank.get(guideKey(step)) ?? index) - index),
+    0,
+  )
+}
+
+function findContinuousRouteToTarget(
+  steps: GuideStep[],
+  adjacency: Map<string, string[]>,
+  startDirection: GuideStartDirection,
+  targetKey: string | null,
+) {
+  const compareOrder = directionalReadingOrder(startDirection)
+  const orderedSteps = [...steps].sort(compareOrder)
+  const indexByKey = new Map(orderedSteps.map((step, index) => [guideKey(step), index]))
+  const neighbors = orderedSteps.map((step) =>
+    (adjacency.get(guideKey(step)) ?? []).flatMap((key) => {
+      const index = indexByKey.get(key)
+      return index === undefined ? [] : [index]
+    }),
+  )
+  const sweep = directionalSweep(orderedSteps, startDirection)
+  const sweepRankByKey = new Map(sweep.map((step, index) => [guideKey(step), index]))
+  const sweepRank = orderedSteps.map((step) => sweepRankByKey.get(guideKey(step)) ?? 0)
+  const bandSizes = new Map<number, number>()
+  for (const step of orderedSteps) {
+    const band = directionalPosition(step, startDirection).band
+    bandSizes.set(band, (bandSizes.get(band) ?? 0) + 1)
+  }
+  const targetIndex = targetKey === null ? null : indexByKey.get(targetKey)
+  if (targetKey !== null && targetIndex === undefined) return null
+
+  const visited = new Uint8Array(orderedSteps.length)
+  const seen = new Uint32Array(orderedSteps.length)
+  const route: number[] = []
+  let seenToken = 0
+  let exploredStates = 0
+
+  const remainingIsViable = (nextIndex: number, remainingCount: number) => {
+    if (remainingCount === 0) {
+      return targetIndex === null || nextIndex === targetIndex
+    }
+
+    visited[nextIndex] = 1
+    let viable = neighbors[nextIndex].some((neighbor) => !visited[neighbor])
+    let firstUnvisited = -1
+    let degreeOneCount = 0
+
+    for (let index = 0; viable && index < orderedSteps.length; index += 1) {
+      if (visited[index]) continue
+      if (firstUnvisited < 0) firstUnvisited = index
+
+      let availableDegree = 0
+      for (const neighbor of neighbors[index]) {
+        if (!visited[neighbor] || neighbor === nextIndex) availableDegree += 1
+      }
+      if (availableDegree === 0) {
+        viable = false
+      } else if (availableDegree === 1) {
+        if (targetIndex === null) {
+          degreeOneCount += 1
+          if (degreeOneCount > 1) viable = false
+        } else if (index !== targetIndex) {
+          viable = false
+        }
+      }
+    }
+
+    if (viable) {
+      seenToken += 1
+      const pending = [firstUnvisited]
+      seen[firstUnvisited] = seenToken
+      let connectedCount = 0
+
+      while (pending.length) {
+        const index = pending.pop()!
+        connectedCount += 1
+        for (const neighbor of neighbors[index]) {
+          if (visited[neighbor] || seen[neighbor] === seenToken) continue
+          seen[neighbor] = seenToken
+          pending.push(neighbor)
+        }
+      }
+      viable = connectedCount === remainingCount
+    }
+
+    visited[nextIndex] = 0
+    return viable
+  }
+
+  const search = (currentIndex: number): boolean => {
+    exploredStates += 1
+    if (exploredStates > BACKTRACK_STATE_LIMIT) return false
+
+    visited[currentIndex] = 1
+    route.push(currentIndex)
+    const remainingCount = orderedSteps.length - route.length
+    if (remainingCount === 0) {
+      const complete = targetIndex === null || currentIndex === targetIndex
+      if (!complete) {
+        route.pop()
+        visited[currentIndex] = 0
+      }
+      return complete
+    }
+
+    const currentStep = orderedSteps[currentIndex]
+    const currentPosition = directionalPosition(currentStep, startDirection)
+    const currentRank = sweepRank[currentIndex]
+    const candidates = neighbors[currentIndex]
+      .filter((index) => (
+        !visited[index] &&
+        (targetIndex === null || index !== targetIndex || remainingCount === 1)
+      ))
+      .filter((index) => remainingIsViable(index, remainingCount - 1))
+      .sort((left, right) => {
+        const forwardGroup = (index: number) => {
+          const position = directionalPosition(orderedSteps[index], startDirection)
+          return position.band === currentPosition.band && sweepRank[index] > currentRank ? 0 : 1
+        }
+        const groupDifference = forwardGroup(left) - forwardGroup(right)
+        if (groupDifference) return groupDifference
+        if ((bandSizes.get(currentPosition.band) ?? 0) === 1) {
+          const distanceDifference =
+            squaredDistance(currentStep, orderedSteps[left]) -
+            squaredDistance(currentStep, orderedSteps[right])
+          if (distanceDifference) return distanceDifference
+        }
+        return (
+          sweepRank[left] - sweepRank[right] ||
+          compareOrder(orderedSteps[left], orderedSteps[right])
+        )
+      })
+
+    for (const candidate of candidates) {
+      if (search(candidate)) return true
+      if (exploredStates > BACKTRACK_STATE_LIMIT) break
+    }
+
+    route.pop()
+    visited[currentIndex] = 0
+    return false
+  }
+
+  return search(0) ? route.map((index) => orderedSteps[index]) : null
+}
+
+function continuousStitchRoute(
+  steps: GuideStep[],
+  adjacency: Map<string, string[]>,
+  startDirection: GuideStartDirection,
+) {
+  if (steps.length > BACKTRACK_VERTEX_LIMIT) return null
+
+  const sweep = directionalSweep(steps, startDirection)
+  const sweepRank = new Map(sweep.map((step, index) => [guideKey(step), index]))
+  const lastBand = directionalPosition(sweep[sweep.length - 1], startDirection).band
+  const lastBandSteps = sweep.filter(
+    (step) => directionalPosition(step, startDirection).band === lastBand,
+  )
+  const targetKeys = [lastBandSteps[0], lastBandSteps[lastBandSteps.length - 1]]
+    .map(guideKey)
+    .filter((key, index, keys) => keys.indexOf(key) === index)
+
+  let bestRoute: GuideStep[] | null = null
+  let bestScore = Number.POSITIVE_INFINITY
+  // Probar ambos extremos conserva la lectura en serpentina y evita terminar
+  // atrapado en el centro de una figura cuando existe una salida más natural.
+  for (const target of targetKeys) {
+    const route = findContinuousRouteToTarget(steps, adjacency, startDirection, target)
+    if (!route) continue
+    const score = routeSweepScore(route, sweepRank)
+    if (score < bestScore) {
+      bestRoute = route
+      bestScore = score
+    }
+  }
+
+  return bestRoute ?? findContinuousRouteToTarget(steps, adjacency, startDirection, null)
+}
+
 function localStitchRoute(
   steps: GuideStep[],
   adjacency: Map<string, string[]>,
@@ -354,6 +543,7 @@ export function generateAutomaticGuide(
   const steps = routeIsContinuous(sweep)
     ? sweep
     : components.flatMap((component) =>
+        continuousStitchRoute(component, adjacency, startDirection) ??
         localStitchRoute(component, adjacency, startDirection),
       )
 

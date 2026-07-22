@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { PatternDocument } from '../types'
-import { getGuideRoutePoints, getPaintedPatternBounds } from './exportPattern'
+import { drawGuideSteps, getGuideRoutePoints, getPaintedPatternBounds } from './exportPattern'
 
 function createDocument(cells: Record<string, string>): PatternDocument {
   return {
@@ -60,5 +60,50 @@ describe('getGuideRoutePoints', () => {
       { x: 88, y: 68 },
       { x: 48, y: 68 },
     ])
+  })
+})
+
+describe('drawGuideSteps', () => {
+  function createContext() {
+    return {
+      beginPath: vi.fn(),
+      fill: vi.fn(),
+      fillText: vi.fn(),
+      lineTo: vi.fn(),
+      measureText: vi.fn(() => ({ width: 5 })),
+      moveTo: vi.fn(),
+      restore: vi.fn(),
+      roundRect: vi.fn(),
+      save: vi.fn(),
+      stroke: vi.fn(),
+    } as unknown as CanvasRenderingContext2D
+  }
+
+  it('draws guide numbers without connecting lines when the route is hidden', () => {
+    const document = createDocument({})
+    document.guideSteps = [
+      { row: 0, column: 1 },
+      { row: 0, column: 3 },
+    ]
+    const context = createContext()
+
+    drawGuideSteps(context, document, { showRoute: false })
+
+    expect(context.lineTo).not.toHaveBeenCalled()
+    expect(context.fillText).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the connecting line visible by default in the editor', () => {
+    const document = createDocument({})
+    document.guideSteps = [
+      { row: 0, column: 1 },
+      { row: 0, column: 3 },
+    ]
+    const context = createContext()
+
+    drawGuideSteps(context, document)
+
+    expect(context.lineTo).toHaveBeenCalled()
+    expect(context.fillText).toHaveBeenCalledTimes(2)
   })
 })

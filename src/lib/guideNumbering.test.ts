@@ -39,6 +39,13 @@ function expectConnectedRoute(steps: GuideStep[]) {
   }
 }
 
+function parseCrosses(source: string): GuideStep[] {
+  return source.trim().split(/\s+/).map((key) => {
+    const [row, column] = key.split(':').map(Number)
+    return { row, column }
+  })
+}
+
 describe('numeración automática del recorrido', () => {
   it('acepta una cruz canónica y rechaza un intersticio con orientaciones invertidas', () => {
     expect(findNumberableCrosses(documentForCrosses([{ row: 2, column: 3 }]))).toEqual([
@@ -235,7 +242,7 @@ describe('numeración automática del recorrido', () => {
     expectConnectedRoute(result.steps)
   })
 
-  it('evita el salto 36 a 37 del diseño de referencia al comenzar por la izquierda', () => {
+  it('evita el salto del diseño de referencia desde arriba y desde la izquierda', () => {
     const range = (start: number, end: number) => {
       const columns: number[] = []
       for (let column = start; column <= end; column += 2) columns.push(column)
@@ -253,9 +260,8 @@ describe('numeración automática del recorrido', () => {
     const fromTop = generateAutomaticGuide(document, 'top')
     const fromLeft = generateAutomaticGuide(document, 'left')
 
-    expect(fromTop.steps[35]).toEqual({ row: 6, column: 1 })
-    expect(fromTop.steps[36]).toEqual({ row: 12, column: 7 })
-    expect(areGuideStepsNeighbors(fromTop.steps[35], fromTop.steps[36])).toBe(false)
+    expect(fromTop.continuous).toBe(true)
+    expectConnectedRoute(fromTop.steps)
     expect(fromLeft.steps[0]).toEqual({ row: 6, column: 1 })
     expect(fromLeft.continuous).toBe(true)
     expectConnectedRoute(fromLeft.steps)
@@ -334,6 +340,34 @@ describe('numeración automática del recorrido', () => {
 
     expect(result.componentCount).toBe(2)
     expect(sectionChanges).toBe(1)
+  })
+
+  it('resuelve el recorrido irregular de Snoopy sin saltos ni puntos repetidos', () => {
+    const crosses = parseCrosses(`
+      10:35 10:33 10:31 10:29 10:27 12:25 12:27 12:29 12:31 12:33 12:35 12:37
+      14:39 14:37 14:35 14:33 14:31 14:29 14:27 14:25 14:23 16:21 16:23 16:25
+      16:27 16:29 16:31 16:33 16:35 16:37 16:39 18:41 18:39 18:37 18:35 18:33
+      18:31 18:29 18:27 18:25 18:23 18:21 18:19 16:19 18:17 18:15 20:13 20:15
+      20:17 20:19 20:21 20:23 20:25 20:27 20:29 20:31 20:33 20:35 20:37 20:39
+      20:41 22:41 22:39 22:37 22:35 22:33 22:31 22:29 22:27 22:25 22:23 22:21
+      22:19 22:17 22:15 24:17 24:19 26:21 24:21 24:23 26:23 26:25 24:25 24:27
+      26:27 26:29 24:29 24:31 26:31 26:33 24:33 24:35 26:35 26:37 24:37 24:39
+      24:41 26:41 26:39 28:39 28:37 28:35 28:33 28:31 28:29 28:27 28:25 30:25
+      30:27 30:29 30:31 32:29 32:27 32:25 32:23 34:23 34:25 34:27 34:29 36:31
+      36:29 36:27 36:25 36:23 36:21 38:21 38:23 38:25 38:27 38:29 38:31 40:31
+      40:29 40:27 40:25 40:23 40:21 42:23 42:25 42:27 42:29 42:31 42:33 44:33
+      44:31 44:29 44:27 44:25 46:25 46:27 46:29 46:31 46:33 48:31 48:29 48:27
+      48:25 48:23 48:21 50:21 50:23 50:25 50:27 50:29 50:31
+    `)
+    const result = generateAutomaticGuide(documentForCrosses(crosses, 63, 55))
+
+    expect(result.steps).toHaveLength(crosses.length)
+    expect(new Set(result.steps.map((step) => beadKey(step.row, step.column))).size).toBe(
+      crosses.length,
+    )
+    expect(result.componentCount).toBe(1)
+    expect(result.continuous).toBe(true)
+    expectConnectedRoute(result.steps)
   })
 
   it('una retícula 11 por 11 llena produce solo las 20 cruces canónicas', () => {
