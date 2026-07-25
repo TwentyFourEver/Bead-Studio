@@ -3,6 +3,7 @@ import { IMPORT_VISIBLE_MARGIN, MAX_DIMENSION, beadKey } from './geometry'
 
 const LOOSE_KEY = /^(-?\d+):(-?\d+)$/
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
+const IMPORT_CANVAS_BACKGROUND = '#696969'
 
 export interface NormalizedImport {
   rows: number
@@ -100,7 +101,7 @@ export function createImportedDocument(
     columns: imported.columns,
     cells: imported.cells,
     guideSteps: [],
-    background: { ...current.background, mode: 'transparent' },
+    background: { mode: 'solid', color: IMPORT_CANVAS_BACKGROUND },
   }
 }
 

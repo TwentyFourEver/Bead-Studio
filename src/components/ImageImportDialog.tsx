@@ -28,9 +28,12 @@ interface ImageImportDialogProps {
   error: string | null
   backgroundMode: 'auto' | 'manual'
   backgroundTolerance: number
+  backgroundToleranceSelection: 'automatic' | 'manual'
+  autoBackgroundToleranceActive: boolean
   colorMergeDelta: number
   onBackgroundModeChange: (mode: 'auto' | 'manual') => void
   onBackgroundToleranceChange: (value: number) => void
+  onAutoBackgroundTolerance: () => void
   onColorMergeDeltaChange: (value: number) => void
   onPickBackground: (rgb: RGB) => void
   onToggleCell: (row: number, column: number) => void
@@ -418,9 +421,12 @@ export function ImageImportDialog({
   error,
   backgroundMode,
   backgroundTolerance,
+  backgroundToleranceSelection,
+  autoBackgroundToleranceActive,
   colorMergeDelta,
   onBackgroundModeChange,
   onBackgroundToleranceChange,
+  onAutoBackgroundTolerance,
   onColorMergeDeltaChange,
   onPickBackground,
   onToggleCell,
@@ -603,7 +609,7 @@ export function ImageImportDialog({
         centerY,
         radii.radiusX * scaleX,
         radii.radiusY * scaleY,
-        0,
+        (bead.angleDegrees ?? 0) * Math.PI / 180,
         0,
         Math.PI * 2,
       )
@@ -1089,8 +1095,16 @@ export function ImageImportDialog({
       return (
         <div className="image-import-state" role="status" aria-live="polite">
           <span className="image-import-spinner" aria-hidden="true" />
-          <h3>Analizando el diseño</h3>
-          <p>Separando el fondo, detectando cuentas y ajustando la retícula…</p>
+          <h3>
+            {autoBackgroundToleranceActive
+              ? 'Buscando la mejor tolerancia'
+              : 'Analizando el diseño'}
+          </h3>
+          <p>
+            {autoBackgroundToleranceActive
+              ? 'Comparando separaciones de fondo y comprobando la retícula…'
+              : 'Separando el fondo, detectando cuentas y ajustando la retícula…'}
+          </p>
           <button type="button" className="image-import-secondary-button" onClick={onCancel}>
             Cancelar análisis
           </button>
@@ -1241,8 +1255,11 @@ export function ImageImportDialog({
             <section className="image-import-panel-section">
               <div className="image-import-section-heading">
                 <h3>Resumen</h3>
-                <span className={`image-import-confidence image-import-confidence-${statusClass}`}>
-                  {Math.round(confidence * 100)}% confianza
+                <span
+                  className={`image-import-confidence image-import-confidence-${statusClass}`}
+                  title="Calidad del ajuste geométrico; revisa también el número de cuentas y los colores."
+                >
+                  {Math.round(confidence * 100)}% retícula
                 </span>
               </div>
               <dl className="image-import-metrics">
@@ -1299,8 +1316,20 @@ export function ImageImportDialog({
                 </label>
               )}
 
-              <label className="image-import-range-control">
-                <span><span>Tolerancia</span><output>{backgroundTolerance}</output></span>
+              <div className="image-import-range-control">
+                <span>
+                  <span className="image-import-range-label">
+                    Tolerancia
+                    <small className="image-import-auto-status">
+                      {autoBackgroundToleranceActive
+                        ? 'Buscando…'
+                        : backgroundToleranceSelection === 'automatic'
+                          ? 'Automática'
+                          : 'Manual'}
+                    </small>
+                  </span>
+                  <output>{backgroundTolerance}</output>
+                </span>
                 <input
                   type="range"
                   min="0"
@@ -1308,9 +1337,20 @@ export function ImageImportDialog({
                   step="1"
                   value={backgroundTolerance}
                   onChange={(event) => onBackgroundToleranceChange(Number(event.target.value))}
+                  aria-label="Tolerancia para separar el fondo"
                 />
-                <small>Sube el valor si quedan restos del fondo.</small>
-              </label>
+                <span className="image-import-range-footer">
+                  <small>Se calcula al cargar; puedes corregirla manualmente.</small>
+                  <button
+                    type="button"
+                    className="image-import-auto-button"
+                    onClick={onAutoBackgroundTolerance}
+                    disabled={analyzing}
+                  >
+                    Autoajustar
+                  </button>
+                </span>
+              </div>
             </section>
 
             <section className="image-import-panel-section">

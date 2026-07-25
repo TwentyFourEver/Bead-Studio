@@ -1,5 +1,6 @@
 import {
   analyzePatternImage,
+  analyzePatternImageWithAutomaticTolerance,
   type ImageAnalysisOptions,
   type PatternAnalysisResult,
 } from '../lib/imageAnalysis'
@@ -15,6 +16,7 @@ export interface ImageAnalysisWorkerAnalyzeRequest {
   requestId: number
   image: ImageAnalysisWorkerImage
   options?: Partial<ImageAnalysisOptions>
+  autoBackgroundTolerance?: boolean
 }
 
 export interface ImageAnalysisWorkerCancelRequest {
@@ -85,7 +87,10 @@ workerPort.onmessage = (event) => {
       return
     }
     try {
-      const result = analyzePatternImage(
+      const analyze = request.autoBackgroundTolerance
+        ? analyzePatternImageWithAutomaticTolerance
+        : analyzePatternImage
+      const result = analyze(
         {
           width: request.image.width,
           height: request.image.height,

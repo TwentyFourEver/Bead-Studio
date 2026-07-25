@@ -70,6 +70,10 @@ export interface PatternAnalysisResult {
   beads: DetectedBead[]
   transform: GridTransform | null
   background: RGB | null
+  backgroundTolerance: number
+  backgroundToleranceAutomatic: boolean
+  ignoredComponents: number
+  recoveredBeads: number
   confidence: number
   warnings: string[]
   canApply: boolean
@@ -93,6 +97,14 @@ export const DEFAULT_IMAGE_ANALYSIS_OPTIONS: Readonly<ImageAnalysisOptions> = {
 export const MAX_VISIBLE_BEADS_PER_AXIS = 199
 const MAX_GRID_DIMENSION = MAX_VISIBLE_BEADS_PER_AXIS * 2 - 1
 const MIN_ALPHA = 32
+const RECOVERY_BACKGROUND_TOLERANCE = 24
+const AUTO_TOLERANCE_PREVIEW_SIDE = 720
+const AUTO_TOLERANCE_COARSE_VALUES = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60] as const
+
+type AnalysisCoreResult = Omit<
+  PatternAnalysisResult,
+  'backgroundTolerance' | 'backgroundToleranceAutomatic'
+>
 
 interface Lab {
   l: number
@@ -286,12 +298,19 @@ function buildForegroundMask(
 ) {
   const mask = new Uint8Array(image.width * image.height)
   const backgroundLab = background ? rgbToLab(background) : null
+  if (!backgroundLab) {
+    for (let index = 0; index < mask.length; index += 1) {
+      if (image.data[index * 4 + 3] >= MIN_ALPHA) mask[index] = 1
+    }
+    return mask
+  }
+
+  const backgroundCandidate = new Uint8Array(mask.length)
   const cache = new Map<number, Lab>()
   for (let index = 0; index < mask.length; index += 1) {
     const offset = index * 4
-    if (image.data[offset + 3] < MIN_ALPHA) continue
-    if (!backgroundLab) {
-      mask[index] = 1
+    if (image.data[offset + 3] < MIN_ALPHA) {
+      backgroundCandidate[index] = 1
       continue
     }
     const rgb = {
@@ -305,7 +324,43 @@ function buildForegroundMask(
       lab = rgbToLab(rgb)
       cache.set(key, lab)
     }
-    if (deltaE(lab, backgroundLab) > tolerance) mask[index] = 1
+    if (deltaE(lab, backgroundLab) <= tolerance) backgroundCandidate[index] = 1
+  }
+
+  // El fondo sólo se elimina si puede alcanzarse desde el borde. De este modo,
+  // un tono parecido al fondo que esté encerrado por el contorno de una cuenta
+  // sigue formando parte de la cuenta (incluidos sus brillos y agujeros).
+  const connectedBackground = new Uint8Array(mask.length)
+  const queue = new Int32Array(mask.length)
+  let head = 0
+  let tail = 0
+  const enqueue = (index: number) => {
+    if (!backgroundCandidate[index] || connectedBackground[index]) return
+    connectedBackground[index] = 1
+    queue[tail++] = index
+  }
+  for (let x = 0; x < image.width; x += 1) {
+    enqueue(x)
+    enqueue((image.height - 1) * image.width + x)
+  }
+  for (let y = 1; y + 1 < image.height; y += 1) {
+    enqueue(y * image.width)
+    enqueue(y * image.width + image.width - 1)
+  }
+  while (head < tail) {
+    const index = queue[head++]
+    const x = index % image.width
+    const y = Math.floor(index / image.width)
+    if (x > 0) enqueue(index - 1)
+    if (x + 1 < image.width) enqueue(index + 1)
+    if (y > 0) enqueue(index - image.width)
+    if (y + 1 < image.height) enqueue(index + image.width)
+  }
+
+  for (let index = 0; index < mask.length; index += 1) {
+    if (image.data[index * 4 + 3] >= MIN_ALPHA && !connectedBackground[index]) {
+      mask[index] = 1
+    }
   }
   return mask
 }
@@ -596,10 +651,14 @@ function linearAxisFit(values: number[], indices: number[], fallbackStep: number
     covariance += (indices[index] - meanIndex) * (values[index] - meanValue)
     variance += (indices[index] - meanIndex) ** 2
   }
-  const step = variance > 0 ? covariance / variance : fallbackStep
+  const fittedStep = variance > 0 ? covariance / variance : fallbackStep
+  const step =
+    fittedStep > fallbackStep * 0.7 && fittedStep < fallbackStep * 1.3
+      ? fittedStep
+      : fallbackStep
   return {
-    step: step > fallbackStep * 0.7 && step < fallbackStep * 1.3 ? step : fallbackStep,
-    phase: meanValue - (step > 0 ? step : fallbackStep) * meanIndex,
+    step,
+    phase: meanValue - step * meanIndex,
   }
 }
 
@@ -797,7 +856,12 @@ function clusterColors(colors: RGB[], threshold: number) {
   return { assignments, palette }
 }
 
-function emptyResult(image: PixelImage, background: RGB | null, warning: string): PatternAnalysisResult {
+function emptyResult(
+  image: PixelImage,
+  background: RGB | null,
+  warning: string,
+  ignoredComponents = 0,
+): AnalysisCoreResult {
   return {
     imageWidth: image.width,
     imageHeight: image.height,
@@ -808,13 +872,153 @@ function emptyResult(image: PixelImage, background: RGB | null, warning: string)
     beads: [],
     transform: null,
     background,
+    ignoredComponents,
+    recoveredBeads: 0,
     confidence: 0,
     warnings: [warning],
     canApply: false,
   }
 }
 
-function normalizationBounds(fitted: FittedBead[]) {
+function parity(value: number) {
+  return ((value % 2) + 2) % 2
+}
+
+function preferredRowOffsetParity(fitted: FittedBead[], rotation: number) {
+  const votes = [0, 0]
+  for (const bead of fitted) {
+    const { component } = bead
+    if (component.aspect < 1.18 || component.shapeScore <= 0) continue
+    let relativeAngle = component.angle - rotation
+    while (relativeAngle > Math.PI / 2) relativeAngle -= Math.PI
+    while (relativeAngle < -Math.PI / 2) relativeAngle += Math.PI
+    const horizontal = Math.abs(relativeAngle) <= Math.PI / 4
+    const desiredRowParity = horizontal ? 0 : 1
+    const requiredOffsetParity = parity(desiredRowParity - bead.rawRow)
+    votes[requiredOffsetParity] +=
+      Math.min(2, component.aspect - 1) *
+      (0.25 + component.shapeScore) *
+      Math.sqrt(component.area)
+  }
+  const total = votes[0] + votes[1]
+  if (total <= 0 || Math.abs(votes[0] - votes[1]) / total < 0.12) return null
+  return votes[1] > votes[0] ? 1 : 0
+}
+
+function recoverGridAlignedComponents(
+  components: Component[],
+  fit: GridFit,
+  imageArea: number,
+) {
+  const seedIndices = new Set(fit.beads.map(({ component }) => component.index))
+  const occupied = new Map(
+    fit.beads.map((bead) => [`${bead.rawRow}:${bead.rawColumn}`, bead]),
+  )
+  const typicalArea = median(fit.beads.map(({ component }) => component.area))
+  const typicalMajor = median(fit.beads.map(({ component }) => component.radiusMajor))
+  const typicalMinor = median(fit.beads.map(({ component }) => component.radiusMinor))
+  const offsetParity = preferredRowOffsetParity(fit.beads, fit.rotation)
+  const cosine = Math.cos(fit.rotation)
+  const sine = Math.sin(fit.rotation)
+  const recovered = new Map<string, { bead: FittedBead; score: number }>()
+
+  for (const component of components) {
+    if (seedIndices.has(component.index)) continue
+    if (
+      component.area >= imageArea * 0.2 ||
+      component.area < typicalArea * 0.22 ||
+      component.area > typicalArea * 4 ||
+      component.radiusMajor < typicalMajor * 0.42 ||
+      component.radiusMajor > typicalMajor * 2.35 ||
+      component.radiusMinor < typicalMinor * 0.38 ||
+      component.radiusMinor > typicalMinor * 2.5 ||
+      component.aspect > 4 ||
+      component.fill < 0.16 ||
+      component.circularity < 0.07 ||
+      component.shapeScore < 0.12
+    ) {
+      continue
+    }
+
+    const u = cosine * component.centerX + sine * component.centerY
+    const v = -sine * component.centerX + cosine * component.centerY
+    const rawColumn = Math.round((u - fit.phaseX) / fit.stepX)
+    const rawRow = Math.round((v - fit.phaseY) / fit.stepY)
+    if (parity(rawRow + rawColumn) !== 0) continue
+    const residual = Math.hypot(
+      (u - (fit.phaseX + rawColumn * fit.stepX)) / fit.stepX,
+      (v - (fit.phaseY + rawRow * fit.stepY)) / fit.stepY,
+    )
+    if (residual > 0.26) continue
+
+    if (offsetParity !== null && component.aspect >= 1.22) {
+      let relativeAngle = component.angle - fit.rotation
+      while (relativeAngle > Math.PI / 2) relativeAngle -= Math.PI
+      while (relativeAngle < -Math.PI / 2) relativeAngle += Math.PI
+      const horizontal = Math.abs(relativeAngle) <= Math.PI / 4
+      const normalizedRowParity = parity(rawRow + offsetParity)
+      if ((horizontal ? 0 : 1) !== normalizedRowParity) continue
+    }
+
+    const key = `${rawRow}:${rawColumn}`
+    if (occupied.has(key)) continue
+    const score =
+      residual +
+      Math.abs(Math.log(component.area / typicalArea)) * 0.06 +
+      (1 - component.shapeScore) * 0.03
+    const current = recovered.get(key)
+    if (!current || score < current.score) {
+      recovered.set(key, {
+        bead: { component, rawRow, rawColumn, residual },
+        score,
+      })
+    }
+  }
+
+  const neighboringKeys = (row: number, column: number) => [
+    `${row}:${column - 2}`,
+    `${row}:${column + 2}`,
+    `${row - 1}:${column - 1}`,
+    `${row - 1}:${column + 1}`,
+    `${row + 1}:${column - 1}`,
+    `${row + 1}:${column + 1}`,
+  ]
+  const allPlausibleKeys = new Set([...occupied.keys(), ...recovered.keys()])
+  const connectedKeys = new Set(occupied.keys())
+  let added = true
+  while (added) {
+    added = false
+    for (const [key, { bead }] of recovered) {
+      if (connectedKeys.has(key)) continue
+      const neighbors = neighboringKeys(bead.rawRow, bead.rawColumn)
+      const nearbyPlausible = neighbors.filter((neighbor) => allPlausibleKeys.has(neighbor)).length
+      if (
+        nearbyPlausible >= 2 &&
+        neighbors.some((neighbor) => connectedKeys.has(neighbor))
+      ) {
+        connectedKeys.add(key)
+        added = true
+      }
+    }
+  }
+  let recoveredCount = 0
+  for (const [key, { bead }] of recovered) {
+    if (!connectedKeys.has(key)) continue
+    occupied.set(key, bead)
+    recoveredCount += 1
+  }
+  return {
+    beads: [...occupied.values()].sort(
+      (left, right) =>
+        left.rawRow - right.rawRow ||
+        left.rawColumn - right.rawColumn ||
+        left.component.index - right.component.index,
+    ),
+    recovered: recoveredCount,
+  }
+}
+
+function normalizationBounds(fitted: FittedBead[], preferredOffsetParity: number | null) {
   const minRawRow = Math.min(...fitted.map(({ rawRow }) => rawRow))
   const maxRawRow = Math.max(...fitted.map(({ rawRow }) => rawRow))
   const minRawColumn = Math.min(...fitted.map(({ rawColumn }) => rawColumn))
@@ -830,11 +1034,25 @@ function normalizationBounds(fitted: FittedBead[]) {
     beforeColumns = 1
   }
   const margin = IMPORT_VISIBLE_MARGIN * 2
+  let rows = spanRows + rowPadding + margin * 2
+  let columns = spanColumns + columnPadding + margin * 2
+  let rowOffset = -minRawRow + beforeRows + margin
+  let columnOffset = -minRawColumn + beforeColumns + margin
+
+  // La misma retícula admite dos fases visuales: filas pares horizontales o
+  // verticales. Desplazar ambos ejes conserva las celdas válidas y hace que
+  // la vista resultante respete la orientación observada en la fotografía.
+  if (preferredOffsetParity !== null && parity(rowOffset) !== preferredOffsetParity) {
+    rows += 2
+    columns += 2
+    rowOffset += 1
+    columnOffset += 1
+  }
   return {
-    rows: spanRows + rowPadding + margin * 2,
-    columns: spanColumns + columnPadding + margin * 2,
-    rowOffset: -minRawRow + beforeRows + margin,
-    columnOffset: -minRawColumn + beforeColumns + margin,
+    rows,
+    columns,
+    rowOffset,
+    columnOffset,
   }
 }
 
@@ -862,6 +1080,10 @@ export function sampleGridCellColor(
     ? resolved.backgroundColor
     : estimateBackground(image)
   const backgroundLab = background ? rgbToLab(background) : null
+  const samplingTolerance = Math.min(
+    resolved.backgroundTolerance,
+    RECOVERY_BACKGROUND_TOLERANCE,
+  )
   const radius = Math.max(1.5, Math.min(transform.stepX, transform.stepY) * 0.27)
   const minimumX = Math.max(0, Math.floor(center.x - radius))
   const maximumX = Math.min(image.width - 1, Math.ceil(center.x + radius))
@@ -876,7 +1098,7 @@ export function sampleGridCellColor(
       const offset = (y * image.width + x) * 4
       if (image.data[offset + 3] < MIN_ALPHA) continue
       const rgb = { r: image.data[offset], g: image.data[offset + 1], b: image.data[offset + 2] }
-      if (backgroundLab && deltaE(rgbToLab(rgb), backgroundLab) <= resolved.backgroundTolerance) continue
+      if (backgroundLab && deltaE(rgbToLab(rgb), backgroundLab) <= samplingTolerance) continue
       red.push(rgb.r)
       green.push(rgb.g)
       blue.push(rgb.b)
@@ -887,12 +1109,10 @@ export function sampleGridCellColor(
   return { sourceX: center.x, sourceY: center.y, rgb, color: rgbToHex(rgb) }
 }
 
-export function analyzePatternImage(
+function analyzePatternImageAtTolerance(
   image: PixelImage,
-  options?: Partial<ImageAnalysisOptions>,
-): PatternAnalysisResult {
-  validateImage(image)
-  const resolved = normalizedOptions(options)
+  resolved: ImageAnalysisOptions,
+): AnalysisCoreResult {
   const warnings: string[] = []
   const background = resolved.backgroundMode === 'manual'
     ? resolved.backgroundColor
@@ -904,23 +1124,63 @@ export function analyzePatternImage(
   const components = extractComponents(image, mask)
   const candidates = selectBeadSizedComponents(components, image.width * image.height)
   if (candidates.length < 3) {
-    return emptyResult(image, background, 'No se encontraron suficientes cuentas separadas del fondo.')
+    return emptyResult(
+      image,
+      background,
+      'No se encontraron suficientes cuentas separadas del fondo.',
+      components.length,
+    )
   }
   const unconstrainedRotation = estimateRotation(candidates) * 180 / Math.PI
   if (Math.abs(unconstrainedRotation) > resolved.maxRotationDegrees + 0.5) {
     warnings.push(`La inclinación se limitó a ${resolved.maxRotationDegrees.toFixed(0)} grados.`)
   }
-  const fit = fitGrid(candidates, resolved.maxRotationDegrees)
-  if (!fit) {
-    return emptyResult(image, background, 'No fue posible ajustar una retícula alternada fiable.')
+  const initialFit = fitGrid(candidates, resolved.maxRotationDegrees)
+  if (!initialFit) {
+    return emptyResult(
+      image,
+      background,
+      'No fue posible ajustar una retícula alternada fiable.',
+      components.length,
+    )
   }
-  const bounds = normalizationBounds(fit.beads)
+  let recoveryComponents = components
+  if (background && resolved.backgroundTolerance > RECOVERY_BACKGROUND_TOLERANCE) {
+    const recoveryMask = buildForegroundMask(
+      image,
+      background,
+      RECOVERY_BACKGROUND_TOLERANCE,
+    )
+    const secondaryComponents = extractComponents(image, recoveryMask).map(
+      (component, index) => ({
+        ...component,
+        index: components.length + index,
+      }),
+    )
+    recoveryComponents = [...components, ...secondaryComponents]
+  }
+  const recovery = recoverGridAlignedComponents(
+    recoveryComponents,
+    initialFit,
+    image.width * image.height,
+  )
+  const fit = { ...initialFit, beads: recovery.beads }
+  if (recovery.recovered > 0) {
+    warnings.push(
+      `Se recuperaron ${recovery.recovered} cuentas adicionales usando la retícula detectada.`,
+    )
+  }
+  const bounds = normalizationBounds(
+    fit.beads,
+    preferredRowOffsetParity(fit.beads, fit.rotation),
+  )
   const exceedsLimit = bounds.rows > MAX_GRID_DIMENSION || bounds.columns > MAX_GRID_DIMENSION
   if (exceedsLimit) {
     return emptyResult(
       image,
       background,
       'El patrón y su margen de 5 posiciones superan el límite de 199 cuentas visibles por eje.',
+      components.length,
     )
   }
   const rows = bounds.rows
@@ -966,7 +1226,12 @@ export function analyzePatternImage(
       confidence: clamp((1 - bead.residual / 0.38) * 0.7 + bead.component.shapeScore * 0.3, 0, 1),
     }
   })
-  const rejected = components.length - beads.length
+  const acceptedPrimaryComponents = new Set(
+    fit.beads
+      .map(({ component }) => component.index)
+      .filter((index) => index < components.length),
+  ).size
+  const rejected = components.length - acceptedPrimaryComponents
   if (rejected > 0) {
     warnings.push(`Se ignoraron ${rejected} formas que parecían texto, ruido o elementos fuera de la retícula.`)
   }
@@ -984,8 +1249,219 @@ export function analyzePatternImage(
     beads,
     transform,
     background,
+    ignoredComponents: rejected,
+    recoveredBeads: recovery.recovered,
     confidence: fit.confidence,
     warnings,
     canApply,
+  }
+}
+
+function createTolerancePreview(image: PixelImage): PixelImage {
+  const longestSide = Math.max(image.width, image.height)
+  if (longestSide <= AUTO_TOLERANCE_PREVIEW_SIDE) return image
+  const scale = AUTO_TOLERANCE_PREVIEW_SIDE / longestSide
+  const width = Math.max(1, Math.round(image.width * scale))
+  const height = Math.max(1, Math.round(image.height * scale))
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y += 1) {
+    const sourceY = Math.min(
+      image.height - 1,
+      Math.floor((y + 0.5) * image.height / height),
+    )
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = Math.min(
+        image.width - 1,
+        Math.floor((x + 0.5) * image.width / width),
+      )
+      const sourceOffset = (sourceY * image.width + sourceX) * 4
+      const targetOffset = (y * width + x) * 4
+      data[targetOffset] = image.data[sourceOffset]
+      data[targetOffset + 1] = image.data[sourceOffset + 1]
+      data[targetOffset + 2] = image.data[sourceOffset + 2]
+      data[targetOffset + 3] = image.data[sourceOffset + 3]
+    }
+  }
+  return { width, height, data }
+}
+
+function gridSimilarity(left: AnalysisCoreResult, right: AnalysisCoreResult) {
+  const leftTransform = left.transform
+  const rightTransform = right.transform
+  if (!leftTransform || !rightTransform || !left.beads.length || !right.beads.length) return 0
+  const ratio = (leftValue: number, rightValue: number) =>
+    Math.min(leftValue, rightValue) / Math.max(leftValue, rightValue)
+  const stepSimilarity =
+    (ratio(leftTransform.stepX, rightTransform.stepX) +
+      ratio(leftTransform.stepY, rightTransform.stepY)) / 2
+  const countSimilarity = ratio(left.beads.length, right.beads.length)
+  const rotationSimilarity = 1 - clamp(
+    Math.abs(leftTransform.rotationDegrees - rightTransform.rotationDegrees) / 8,
+    0,
+    1,
+  )
+  return stepSimilarity * 0.42 + countSimilarity * 0.42 + rotationSimilarity * 0.16
+}
+
+interface ToleranceEvaluation {
+  tolerance: number
+  result: AnalysisCoreResult
+  score: number
+}
+
+function paletteBackgroundSeparation(result: AnalysisCoreResult) {
+  if (!result.background || !result.palette.length) return result.palette.length ? 1 : 0
+  const backgroundLab = rgbToLab(result.background)
+  const total = result.palette.reduce((sum, entry) => sum + entry.count, 0)
+  if (!total) return 0
+  return result.palette.reduce(
+    (sum, entry) =>
+      sum +
+      clamp(deltaE(rgbToLab(entry.rgb), backgroundLab) / 35, 0, 1) *
+      entry.count,
+    0,
+  ) / total
+}
+
+function detectedGridDensity(result: AnalysisCoreResult) {
+  if (!result.beads.length) return 0
+  const rows = result.beads.map(({ row }) => row)
+  const columns = result.beads.map(({ column }) => column)
+  const rowSpan = Math.max(...rows) - Math.min(...rows) + 1
+  const columnSpan = Math.max(...columns) - Math.min(...columns) + 1
+  const possibleCells = Math.max(1, Math.ceil(rowSpan * columnSpan / 2))
+  return clamp(result.beads.length / possibleCells, 0, 1)
+}
+
+function rankToleranceEvaluations(
+  evaluations: Array<Omit<ToleranceEvaluation, 'score'>>,
+) {
+  const sorted = [...evaluations].sort((left, right) => left.tolerance - right.tolerance)
+  const metrics = new Map<AnalysisCoreResult, {
+    colorSeparation: number
+    componentPrecision: number
+    densityQuality: number
+    foregroundEvidence: number
+    credible: boolean
+  }>()
+  for (const { result } of sorted) {
+    const componentPrecision = result.beads.length
+      ? result.beads.length / (result.beads.length + result.ignoredComponents)
+      : 0
+    const colorSeparation = paletteBackgroundSeparation(result)
+    const densityQuality = clamp(detectedGridDensity(result) / 0.65, 0, 1)
+    const foregroundEvidence =
+      colorSeparation * Math.sqrt(densityQuality * componentPrecision)
+    metrics.set(result, {
+      colorSeparation,
+      componentPrecision,
+      densityQuality,
+      foregroundEvidence,
+      credible: result.canApply && foregroundEvidence >= 0.08,
+    })
+  }
+  const maximumBeads = Math.max(
+    1,
+    ...sorted
+      .filter(({ result }) => metrics.get(result)?.credible)
+      .map(({ result }) => result.beads.length),
+  )
+  return sorted.map((evaluation, index): ToleranceEvaluation => {
+    const { result } = evaluation
+    const resultMetrics = metrics.get(result)!
+    const previous = sorted[index - 1]?.result
+    const next = sorted[index + 1]?.result
+    const neighborSimilarities = [
+      previous ? gridSimilarity(result, previous) : null,
+      next ? gridSimilarity(result, next) : null,
+    ].filter((value): value is number => value !== null)
+    const stability = neighborSimilarities.length
+      ? neighborSimilarities.reduce((sum, value) => sum + value, 0) /
+        neighborSimilarities.length
+      : 0
+    const countScore = resultMetrics.credible
+      ? result.beads.length / maximumBeads
+      : 0
+    const applicabilityScore = result.canApply
+      ? resultMetrics.credible ? 3 : -4
+      : 0
+    const score =
+      applicabilityScore +
+      countScore * 1.3 +
+      result.confidence * 1.1 +
+      resultMetrics.componentPrecision * 0.45 +
+      stability +
+      resultMetrics.colorSeparation * 0.75 +
+      resultMetrics.densityQuality * 0.1
+    return { ...evaluation, score }
+  }).sort(
+    (left, right) =>
+      right.score - left.score ||
+      right.result.beads.length - left.result.beads.length ||
+      left.tolerance - right.tolerance,
+  )
+}
+
+export function analyzePatternImage(
+  image: PixelImage,
+  options?: Partial<ImageAnalysisOptions>,
+): PatternAnalysisResult {
+  validateImage(image)
+  const resolved = normalizedOptions(options)
+  return {
+    ...analyzePatternImageAtTolerance(image, resolved),
+    backgroundTolerance: resolved.backgroundTolerance,
+    backgroundToleranceAutomatic: false,
+  }
+}
+
+export function analyzePatternImageWithAutomaticTolerance(
+  image: PixelImage,
+  options?: Partial<ImageAnalysisOptions>,
+): PatternAnalysisResult {
+  validateImage(image)
+  const preview = createTolerancePreview(image)
+  const baseOptions = normalizedOptions(options)
+  const previewBackground = baseOptions.backgroundMode === 'manual'
+    ? baseOptions.backgroundColor
+    : estimateBackground(preview)
+  if (!previewBackground) {
+    return {
+      ...analyzePatternImageAtTolerance(image, baseOptions),
+      backgroundTolerance: baseOptions.backgroundTolerance,
+      backgroundToleranceAutomatic: true,
+    }
+  }
+  const evaluated = new Map<number, AnalysisCoreResult>()
+  const evaluate = (tolerance: number) => {
+    const normalizedTolerance = clamp(Math.round(tolerance), 0, 60)
+    const existing = evaluated.get(normalizedTolerance)
+    if (existing) return existing
+    const result = analyzePatternImageAtTolerance(preview, {
+      ...baseOptions,
+      backgroundTolerance: normalizedTolerance,
+    })
+    evaluated.set(normalizedTolerance, result)
+    return result
+  }
+
+  for (const tolerance of AUTO_TOLERANCE_COARSE_VALUES) evaluate(tolerance)
+  const coarseRanked = rankToleranceEvaluations(
+    [...evaluated].map(([tolerance, result]) => ({ tolerance, result })),
+  )
+  const coarseBest = coarseRanked[0]?.tolerance ?? baseOptions.backgroundTolerance
+  for (const offset of [-4, -2, 2, 4]) evaluate(coarseBest + offset)
+  const ranked = rankToleranceEvaluations(
+    [...evaluated].map(([tolerance, result]) => ({ tolerance, result })),
+  )
+  const selectedTolerance = ranked[0]?.tolerance ?? baseOptions.backgroundTolerance
+  const result = analyzePatternImageAtTolerance(image, {
+    ...baseOptions,
+    backgroundTolerance: selectedTolerance,
+  })
+  return {
+    ...result,
+    backgroundTolerance: selectedTolerance,
+    backgroundToleranceAutomatic: true,
   }
 }

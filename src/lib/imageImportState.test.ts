@@ -32,7 +32,7 @@ describe('estado de importación de imagen', () => {
     expect(normalizeImportedCells({ '0:1': '#ffffff', '0:0': 'red' })).toBeNull()
   })
 
-  it('crea un documento transparente, sin guía y conservando el color de fondo', () => {
+  it('crea un documento con fondo gris fijo y sin guía', () => {
     const current = {
       ...DEFAULT_PATTERN,
       guideSteps: [{ row: 1, column: 2 }],
@@ -46,7 +46,7 @@ describe('estado de importación de imagen', () => {
       columns: 21,
       cells: { '10:10': '#123456' },
       guideSteps: [],
-      background: { mode: 'transparent', color: '#abcdef' },
+      background: { mode: 'solid', color: '#696969' },
     })
   })
 

@@ -81,6 +81,11 @@ interface ImageImportSession {
   fileName: string
   prepared: PreparedImageFile | null
   options: ImageAnalysisOptions
+  analysisJob: {
+    options: ImageAnalysisOptions
+    autoBackgroundTolerance: boolean
+  }
+  toleranceSelection: 'automatic' | 'manual'
   result: PatternAnalysisResult | null
   overrides: Record<string, string | null>
   gridSignature: string | null
@@ -246,7 +251,7 @@ function App() {
   const analysisRequestRef = useRef(0)
   const imagePreparationRef = useRef(0)
   const preparedImport = imageImport?.prepared ?? null
-  const importOptions = imageImport?.options ?? null
+  const importAnalysisJob = imageImport?.analysisJob ?? null
 
   const syncHistoryAvailability = useCallback(() => {
     const next = {
@@ -334,7 +339,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!preparedImport || !importOptions) return
+    if (!preparedImport || !importAnalysisJob) return
     const timer = window.setTimeout(() => {
       analysisWorkerRef.current?.terminate()
       const requestId = ++analysisRequestRef.current
@@ -357,12 +362,23 @@ function App() {
           if (message.type === 'result') {
             const signature = analysisGridSignature(message.result)
             setImageImport((current) => {
-              if (!current || current.prepared !== preparedImport) return current
+              if (
+                !current ||
+                current.prepared !== preparedImport ||
+                current.analysisJob !== importAnalysisJob
+              ) return current
               const gridChanged = signature !== null &&
                 current.gridSignature !== null &&
                 current.gridSignature !== signature
               return {
                 ...current,
+                options: {
+                  ...current.options,
+                  backgroundTolerance: message.result.backgroundTolerance,
+                },
+                toleranceSelection: message.result.backgroundToleranceAutomatic
+                  ? 'automatic'
+                  : current.toleranceSelection,
                 result: gridChanged
                   ? {
                       ...message.result,
@@ -379,22 +395,30 @@ function App() {
               }
             })
           } else if (message.type === 'error') {
-            setImageImport((current) => current && current.prepared === preparedImport
+            setImageImport((current) =>
+              current &&
+              current.prepared === preparedImport &&
+              current.analysisJob === importAnalysisJob
               ? { ...current, analyzing: false, error: message.message }
-              : current)
+              : current,
+            )
           }
           worker.terminate()
           if (analysisWorkerRef.current === worker) analysisWorkerRef.current = null
         }
         worker.onerror = (event) => {
           if (requestId !== analysisRequestRef.current) return
-          setImageImport((current) => current && current.prepared === preparedImport
+          setImageImport((current) =>
+            current &&
+            current.prepared === preparedImport &&
+            current.analysisJob === importAnalysisJob
             ? {
                 ...current,
                 analyzing: false,
                 error: event.message || 'No fue posible analizar la imagen.',
               }
-            : current)
+            : current,
+          )
           worker.terminate()
           if (analysisWorkerRef.current === worker) analysisWorkerRef.current = null
         }
@@ -409,14 +433,18 @@ function App() {
               height: preparedImport.image.height,
               data: transferredData,
             },
-            options: importOptions,
+            options: importAnalysisJob.options,
+            autoBackgroundTolerance: importAnalysisJob.autoBackgroundTolerance,
           },
           [transferredData],
         )
       } catch (error) {
         analysisWorkerRef.current?.terminate()
         analysisWorkerRef.current = null
-        setImageImport((current) => current && current.prepared === preparedImport
+        setImageImport((current) =>
+          current &&
+          current.prepared === preparedImport &&
+          current.analysisJob === importAnalysisJob
           ? {
               ...current,
               analyzing: false,
@@ -424,7 +452,8 @@ function App() {
                 ? error.message
                 : 'El navegador no pudo iniciar el análisis local.',
             }
-          : current)
+          : current,
+        )
       }
     }, 160)
 
@@ -437,7 +466,7 @@ function App() {
         analysisWorkerRef.current = null
       }
     }
-  }, [importOptions, preparedImport])
+  }, [importAnalysisJob, preparedImport])
 
   const effectiveImportResult = useMemo(() => {
     const result = imageImport?.result
@@ -495,10 +524,13 @@ function App() {
     analysisRequestRef.current += 1
     analysisWorkerRef.current?.terminate()
     analysisWorkerRef.current = null
+    const options = { ...DEFAULT_IMAGE_ANALYSIS_OPTIONS }
     setImageImport({
       fileName: file.name,
       prepared: null,
-      options: { ...DEFAULT_IMAGE_ANALYSIS_OPTIONS },
+      options,
+      analysisJob: { options, autoBackgroundTolerance: true },
+      toleranceSelection: 'automatic',
       result: null,
       overrides: {},
       gridSignature: null,
@@ -524,27 +556,67 @@ function App() {
   }, [])
 
   const updateImageAnalysisOptions = useCallback((patch: Partial<ImageAnalysisOptions>) => {
-    setImageImport((current) => current
-      ? {
-          ...current,
-          options: { ...current.options, ...patch },
-          analyzing: Boolean(current.prepared),
-          error: null,
-        }
-      : current)
+    setImageImport((current) => {
+      if (!current) return current
+      const options = { ...current.options, ...patch }
+      return {
+        ...current,
+        options,
+        analysisJob: { options, autoBackgroundTolerance: false },
+        analyzing: Boolean(current.prepared),
+        error: null,
+      }
+    })
+  }, [])
+
+  const handleImportBackgroundTolerance = useCallback((backgroundTolerance: number) => {
+    setImageImport((current) => {
+      if (!current) return current
+      const options = {
+        ...current.options,
+        backgroundTolerance,
+      }
+      return {
+        ...current,
+        options,
+        analysisJob: { options, autoBackgroundTolerance: false },
+        toleranceSelection: 'manual',
+        analyzing: Boolean(current.prepared),
+        error: null,
+      }
+    })
+  }, [])
+
+  const autoAdjustImportBackgroundTolerance = useCallback(() => {
+    setImageImport((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        analysisJob: {
+          options: { ...current.options },
+          autoBackgroundTolerance: true,
+        },
+        toleranceSelection: 'automatic',
+        analyzing: Boolean(current.prepared),
+        error: null,
+      }
+    })
   }, [])
 
   const handleImportBackgroundMode = useCallback((mode: 'auto' | 'manual') => {
     setImageImport((current) => {
       if (!current) return current
       const fallback = current.result?.background ?? { r: 255, g: 255, b: 255 }
+      const options: ImageAnalysisOptions = {
+        ...current.options,
+        backgroundMode: mode,
+        backgroundColor: mode === 'manual' ? current.options.backgroundColor ?? fallback : null,
+      }
       return {
         ...current,
-        options: {
-          ...current.options,
-          backgroundMode: mode,
-          backgroundColor: mode === 'manual' ? current.options.backgroundColor ?? fallback : null,
-        },
+        options,
+        analysisJob: { options, autoBackgroundTolerance: true },
+        toleranceSelection: 'automatic',
         analyzing: Boolean(current.prepared),
         error: null,
       }
@@ -552,8 +624,23 @@ function App() {
   }, [])
 
   const handlePickImportBackground = useCallback((backgroundColor: RGB) => {
-    updateImageAnalysisOptions({ backgroundMode: 'manual', backgroundColor })
-  }, [updateImageAnalysisOptions])
+    setImageImport((current) => {
+      if (!current) return current
+      const options: ImageAnalysisOptions = {
+        ...current.options,
+        backgroundMode: 'manual',
+        backgroundColor,
+      }
+      return {
+        ...current,
+        options,
+        analysisJob: { options, autoBackgroundTolerance: true },
+        toleranceSelection: 'automatic',
+        analyzing: Boolean(current.prepared),
+        error: null,
+      }
+    })
+  }, [])
 
   const handleToggleImportedCell = useCallback((row: number, column: number) => {
     if ((row + column) % 2 !== 0) return
@@ -1244,11 +1331,14 @@ function App() {
         error={imageImport?.error ?? null}
         backgroundMode={imageImport?.options.backgroundMode ?? 'auto'}
         backgroundTolerance={imageImport?.options.backgroundTolerance ?? 14}
+        backgroundToleranceSelection={imageImport?.toleranceSelection ?? 'automatic'}
+        autoBackgroundToleranceActive={Boolean(
+          imageImport?.analyzing && imageImport.analysisJob.autoBackgroundTolerance
+        )}
         colorMergeDelta={imageImport?.options.colorMergeDeltaE ?? 8}
         onBackgroundModeChange={handleImportBackgroundMode}
-        onBackgroundToleranceChange={(backgroundTolerance) =>
-          updateImageAnalysisOptions({ backgroundTolerance })
-        }
+        onBackgroundToleranceChange={handleImportBackgroundTolerance}
+        onAutoBackgroundTolerance={autoAdjustImportBackgroundTolerance}
         onColorMergeDeltaChange={(colorMergeDeltaE) =>
           updateImageAnalysisOptions({ colorMergeDeltaE })
         }

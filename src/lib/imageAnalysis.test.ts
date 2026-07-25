@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   IMPORT_VISIBLE_MARGIN,
   analyzePatternImage,
+  analyzePatternImageWithAutomaticTolerance,
   gridToSourcePoint,
+  sampleGridCellColor,
   type PixelImage,
   type RGB,
 } from './imageAnalysis'
@@ -86,6 +88,34 @@ function drawAntialiasedEllipse(
         r: image.data[index] * (1 - alpha) + color.r * alpha,
         g: image.data[index + 1] * (1 - alpha) + color.g * alpha,
         b: image.data[index + 2] * (1 - alpha) + color.b * alpha,
+      })
+    }
+  }
+}
+
+function drawStylizedBead(
+  image: PixelImage,
+  centerX: number,
+  centerY: number,
+  vertical: boolean,
+  color: RGB,
+) {
+  const angle = vertical ? 90 : 0
+  drawEllipse(image, centerX, centerY, 13, 8, angle, { r: 22, g: 22, b: 24 })
+  drawEllipse(image, centerX, centerY, 12, 7, angle, color)
+  const highlightX = centerX + (vertical ? -2 : 2)
+  const highlightY = centerY + (vertical ? 2 : -2)
+  drawEllipse(image, highlightX, highlightY, 2.5, 1.5, angle, { r: 153, g: 153, b: 153 })
+}
+
+function paintGrayTexture(image: PixelImage, base = 160) {
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const noise = (x * 17 + y * 31 + (x * y) % 13) % 23 - 11
+      paintPixel(image, x, y, {
+        r: base + noise,
+        g: base + noise,
+        b: base + noise,
       })
     }
   }
@@ -265,6 +295,259 @@ describe('análisis de diseños de cuentas', () => {
 
     expect(result.canApply).toBe(true)
     expect(result.beads).toHaveLength(5)
+  })
+
+  it('conserva el color de cuentas cerradas aunque se parezca al fondo', () => {
+    const image = createImage(210, 150, { r: 153, g: 153, b: 153 })
+    const colors = [
+      { r: 48, g: 48, b: 48 },
+      { r: 39, g: 169, b: 223 },
+      { r: 244, g: 121, b: 176 },
+    ]
+    const expected: Array<{ x: number; y: number; color: RGB }> = []
+    for (let row = 0; row < 3; row += 1) {
+      for (let column = row % 2; column < 7; column += 2) {
+        const color = colors[(row + column) % colors.length]
+        const x = 42 + column * 20
+        const y = 46 + row * 22
+        drawStylizedBead(image, x, y, row % 2 === 1, color)
+        expected.push({ x, y, color })
+      }
+    }
+
+    const result = analyzePatternImage(image, {
+      backgroundTolerance: 51,
+      colorMergeDeltaE: 0,
+    })
+
+    expect(result.canApply).toBe(true)
+    expect(result.beads).toHaveLength(expected.length)
+    for (const item of expected) {
+      const bead = result.beads.reduce((nearest, candidate) => (
+        Math.hypot(candidate.sourceX - item.x, candidate.sourceY - item.y) <
+        Math.hypot(nearest.sourceX - item.x, nearest.sourceY - item.y)
+          ? candidate
+          : nearest
+      ))
+      expect(Math.hypot(bead.sourceX - item.x, bead.sourceY - item.y)).toBeLessThan(1)
+      expect(Math.abs(bead.rgb.r - item.color.r)).toBeLessThanOrEqual(3)
+      expect(Math.abs(bead.rgb.g - item.color.g)).toBeLessThanOrEqual(3)
+      expect(Math.abs(bead.rgb.b - item.color.b)).toBeLessThanOrEqual(3)
+    }
+  })
+
+  it('recupera cuentas oscuras uniformes con una segunda pasada sobre la retícula', () => {
+    const background = { r: 160, g: 160, b: 160 }
+    const dark = { r: 48, g: 48, b: 48 }
+    const seedColor = { r: 15, g: 45, b: 210 }
+    const image = createImage(250, 190, background)
+    const expected: Array<{ x: number; y: number; dark: boolean }> = []
+    for (let row = 0; row < 5; row += 1) {
+      for (let column = row % 2; column < 9; column += 2) {
+        const isDark = (row + Math.floor(column / 2)) % 3 === 1
+        const x = 46 + column * 20
+        const y = 48 + row * 23
+        drawEllipse(
+          image,
+          x,
+          y,
+          row % 2 === 0 ? 13 : 8,
+          row % 2 === 0 ? 8 : 13,
+          0,
+          isDark ? dark : seedColor,
+        )
+        expected.push({ x, y, dark: isDark })
+      }
+    }
+
+    const result = analyzePatternImage(image, {
+      backgroundTolerance: 51,
+      colorMergeDeltaE: 0,
+    })
+
+    expect(result.canApply).toBe(true)
+    expect(result.beads).toHaveLength(expected.length)
+    const darkBeads = result.beads.filter(({ rgb }) => (
+      Math.abs(rgb.r - dark.r) <= 2 &&
+      Math.abs(rgb.g - dark.g) <= 2 &&
+      Math.abs(rgb.b - dark.b) <= 2
+    ))
+    expect(darkBeads).toHaveLength(expected.filter((item) => item.dark).length)
+    const sampled = sampleGridCellColor(
+      image,
+      result.transform!,
+      darkBeads[0].row,
+      darkBeads[0].column,
+      { backgroundTolerance: 51 },
+    )
+    expect(sampled?.rgb).toEqual(dark)
+    expect(result.warnings.some((warning) => warning.includes('recuperaron'))).toBe(true)
+  })
+
+  it('elige una tolerancia que conserva una cuenta oscura en el extremo', () => {
+    const background = { r: 160, g: 160, b: 160 }
+    const dark = { r: 48, g: 48, b: 48 }
+    const blue = { r: 15, g: 45, b: 210 }
+    const image = createImage(285, 225, background)
+    let expected = 0
+    for (let row = 0; row < 5; row += 1) {
+      for (let column = row % 2; column < 9; column += 2) {
+        drawEllipse(
+          image,
+          46 + column * 20,
+          48 + row * 23,
+          row % 2 === 0 ? 13 : 8,
+          row % 2 === 0 ? 8 : 13,
+          0,
+          blue,
+        )
+        expected += 1
+      }
+    }
+    drawEllipse(image, 46 + 9 * 20, 48 + 5 * 23, 8, 13, 0, dark)
+    expected += 1
+    for (let index = 0; index < 12; index += 1) {
+      drawRect(
+        image,
+        8 + index * 21,
+        192 + index % 2 * 13,
+        8,
+        3,
+        { r: 245, g: 245, b: 245 },
+      )
+    }
+
+    const result = analyzePatternImageWithAutomaticTolerance(image, {
+      backgroundTolerance: 14,
+      colorMergeDeltaE: 0,
+    })
+
+    expect(result.backgroundToleranceAutomatic).toBe(true)
+    expect(result.backgroundTolerance).toBeGreaterThanOrEqual(32)
+    expect(result.backgroundTolerance).toBeLessThanOrEqual(46)
+    expect(result.beads).toHaveLength(expected)
+    expect(result.palette.some(({ rgb }) => (
+      Math.abs(rgb.r - dark.r) <= 2 &&
+      Math.abs(rgb.g - dark.g) <= 2 &&
+      Math.abs(rgb.b - dark.b) <= 2
+    ))).toBe(true)
+    const fixedResult = analyzePatternImage(image, {
+      backgroundTolerance: result.backgroundTolerance,
+      colorMergeDeltaE: 0,
+    })
+    expect(result.cells).toEqual(fixedResult.cells)
+    expect(result.transform).toEqual(fixedResult.transform)
+  })
+
+  it('no inventa un patrón en un fondo gris texturizado', () => {
+    const image = createImage(220, 180, { r: 160, g: 160, b: 160 })
+    paintGrayTexture(image)
+
+    const result = analyzePatternImageWithAutomaticTolerance(image)
+
+    expect(result.backgroundToleranceAutomatic).toBe(true)
+    expect(result.canApply).toBe(false)
+    expect(result.beads).toHaveLength(0)
+  })
+
+  it('ignora la textura y conserva las cuentas reales al autoajustar', () => {
+    const blue = { r: 15, g: 45, b: 210 }
+    const image = createImage(250, 190, { r: 160, g: 160, b: 160 })
+    paintGrayTexture(image)
+    let expected = 0
+    for (let row = 0; row < 5; row += 1) {
+      for (let column = row % 2; column < 9; column += 2) {
+        drawEllipse(
+          image,
+          46 + column * 20,
+          48 + row * 23,
+          row % 2 === 0 ? 13 : 8,
+          row % 2 === 0 ? 8 : 13,
+          0,
+          blue,
+        )
+        expected += 1
+      }
+    }
+
+    const result = analyzePatternImageWithAutomaticTolerance(image, {
+      colorMergeDeltaE: 0,
+    })
+
+    expect(result.canApply).toBe(true)
+    expect(result.backgroundTolerance).toBeGreaterThanOrEqual(8)
+    expect(result.beads).toHaveLength(expected)
+    expect(result.palette).toHaveLength(1)
+    expect(result.palette[0].rgb).toEqual(blue)
+  })
+
+  it('elige una tolerancia baja cuando las cuentas se parecen al fondo', () => {
+    const background = { r: 10, g: 70, b: 10 }
+    const beadColor = { r: 14, g: 105, b: 16 }
+    const image = createImage(250, 190, background)
+    let expected = 0
+    for (let row = 0; row < 5; row += 1) {
+      for (let column = row % 2; column < 9; column += 2) {
+        drawEllipse(
+          image,
+          46 + column * 20,
+          48 + row * 23,
+          row % 2 === 0 ? 13 : 8,
+          row % 2 === 0 ? 8 : 13,
+          0,
+          beadColor,
+        )
+        expected += 1
+      }
+    }
+
+    const result = analyzePatternImageWithAutomaticTolerance(image, {
+      colorMergeDeltaE: 0,
+    })
+
+    expect(result.canApply).toBe(true)
+    expect(result.backgroundTolerance).toBeLessThanOrEqual(20)
+    expect(result.beads).toHaveLength(expected)
+    expect(result.palette[0].rgb).toEqual(beadColor)
+  })
+
+  it('mantiene la tolerancia base cuando el fondo es transparente', () => {
+    const { image, positions } = makePattern(0, true)
+
+    const result = analyzePatternImageWithAutomaticTolerance(image, {
+      backgroundTolerance: 14,
+    })
+
+    expect(result.backgroundTolerance).toBe(14)
+    expect(result.backgroundToleranceAutomatic).toBe(true)
+    expect(result.beads).toHaveLength(positions.length)
+  })
+
+  it('conserva la fase vertical u horizontal de las filas detectadas', () => {
+    const image = createImage(210, 170, { r: 153, g: 153, b: 153 })
+    for (let row = 0; row < 4; row += 1) {
+      for (let column = row % 2; column < 7; column += 2) {
+        drawStylizedBead(
+          image,
+          42 + column * 20,
+          42 + row * 23,
+          row % 2 === 0,
+          { r: 46, g: 75, b: 128 },
+        )
+      }
+    }
+
+    const result = analyzePatternImage(image, {
+      backgroundTolerance: 51,
+      colorMergeDeltaE: 0,
+    })
+
+    expect(result.canApply).toBe(true)
+    expect(result.beads).toHaveLength(14)
+    for (const bead of result.beads) {
+      const sourceIsVertical = Math.abs(Math.sin(bead.angleDegrees * Math.PI / 180)) > 0.7
+      expect(bead.row % 2).toBe(sourceIsVertical ? 1 : 0)
+    }
   })
 
   it('bloquea imágenes sin una retícula suficiente', () => {

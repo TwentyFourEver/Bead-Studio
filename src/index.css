@@ -2887,6 +2887,53 @@ kbd {
   line-height: 1.45;
 }
 
+.image-import-range-label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.image-import-range-control .image-import-auto-status {
+  padding: 2px 5px;
+  color: #91b8fa;
+  font-size: 7px;
+  font-weight: 680;
+  background: rgb(79 141 247 / 10%);
+  border: 1px solid rgb(79 141 247 / 20%);
+  border-radius: 999px;
+}
+
+.image-import-range-footer {
+  gap: 8px;
+}
+
+.image-import-range-footer > small {
+  flex: 1 1 auto;
+}
+
+.image-import-auto-button {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  color: #a9c8ff;
+  font-size: 8px;
+  font-weight: 680;
+  background: rgb(79 141 247 / 9%);
+  border: 1px solid rgb(79 141 247 / 24%);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.image-import-auto-button:hover:not(:disabled) {
+  color: #fff;
+  background: rgb(79 141 247 / 18%);
+  border-color: rgb(79 141 247 / 42%);
+}
+
+.image-import-auto-button:disabled {
+  cursor: default;
+  opacity: .45;
+}
+
 .image-import-palette {
   display: grid;
   gap: 5px;
