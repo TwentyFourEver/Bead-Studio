@@ -7,6 +7,7 @@ import {
   loadPattern,
   moveCells,
   paintCells,
+  replacePatternColor,
   resizePattern,
   savePattern,
 } from './patternState'
@@ -25,6 +26,27 @@ describe('estado del patrón', () => {
     expect(base.cells['0:2']).toBeUndefined()
     const erased = paintCells(painted, [[0, 2]], null)
     expect(erased.cells['0:2']).toBeUndefined()
+  })
+
+  it('reemplaza todas las cuentas de un mismo color aunque esten separadas', () => {
+    const document = {
+      ...base,
+      cells: {
+        '0:0': '#777777',
+        '0:2': '#ff0000',
+        '2:2': '#777777',
+        '4:4': '#777777',
+      },
+    }
+    const replaced = replacePatternColor(document, '#777777', '#ffffff')
+    expect(replaced.cells).toEqual({
+      '0:0': '#ffffff',
+      '0:2': '#ff0000',
+      '2:2': '#ffffff',
+      '4:4': '#ffffff',
+    })
+    expect(document.cells['0:0']).toBe('#777777')
+    expect(replacePatternColor(replaced, '#ffffff', '#FFFFFF')).toBe(replaced)
   })
 
   it('mueve una seleccion conservando sus colores y reemplaza el destino', () => {

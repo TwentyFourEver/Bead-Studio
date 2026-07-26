@@ -38,6 +38,7 @@ import {
   loadPattern,
   moveCells,
   paintCells,
+  replacePatternColor,
   resizePattern,
   savePattern,
 } from './lib/patternState'
@@ -54,6 +55,7 @@ import type {
 
 const TOOL_LABELS: Record<ToolMode, string> = {
   paint: 'Pincel',
+  fill: 'Cubeta',
   erase: 'Borrador',
   select: 'Selección',
   pan: 'Mover lienzo',
@@ -76,6 +78,8 @@ const GUIDE_START_LABELS: Record<GuideStartDirection, string> = {
   top: 'arriba',
   bottom: 'abajo',
 }
+
+const PROJECT_NAME_REQUIRED_NOTICE = 'Escribe un nombre de proyecto antes de guardarlo.'
 
 interface ImageImportSession {
   fileName: string
@@ -209,7 +213,7 @@ function App() {
   const [document, setDocument] = useState<PatternDocument>(() =>
     removeInvalidGuideSteps(loadPattern()),
   )
-  const [projectName, setProjectName] = useState('Patrón sin título')
+  const [projectName, setProjectName] = useState('')
   const [tool, setTool] = useState<ToolMode>('paint')
   const [color, setColor] = useState('#14b8a6')
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none')
@@ -232,9 +236,13 @@ function App() {
     useState<GuideStartDirection>('top')
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false)
   const [isFullscreenPanelOpen, setIsFullscreenPanelOpen] = useState(true)
+  const [isSewingMode, setIsSewingMode] = useState(false)
+  const [completedGuideStepKeys, setCompletedGuideStepKeys] =
+    useState<Set<string>>(() => new Set())
   const [imageImport, setImageImport] = useState<ImageImportSession | null>(null)
   const hasTraceImage = traceImage !== null
   const guideStepCount = document.guideSteps?.length ?? 0
+  const completedGuideStepCount = completedGuideStepKeys.size
   const paintedBeadCount = Object.keys(document.cells).length
   const documentPaletteColors = useMemo(
     () => paletteFromCells(document.cells).map(({ color: paletteColor }) => paletteColor),
@@ -307,6 +315,16 @@ function App() {
   }, [document])
 
   useEffect(() => {
+    const routeKeys = new Set(
+      (document.guideSteps ?? []).map((step) => `${step.row}:${step.column}`),
+    )
+    setCompletedGuideStepKeys((current) => {
+      const next = new Set([...current].filter((key) => routeKeys.has(key)))
+      return next.size === current.size ? current : next
+    })
+  }, [document.guideSteps])
+
+  useEffect(() => {
     traceImageRef.current = traceImage
   }, [traceImage])
 
@@ -319,6 +337,7 @@ function App() {
       const isFullscreen = window.document.fullscreenElement === workspaceRef.current
       setIsCanvasFullscreen(isFullscreen)
       setIsFullscreenPanelOpen(isFullscreen)
+      if (!isFullscreen) setIsSewingMode(false)
       window.requestAnimationFrame(() => canvasRef.current?.fit())
     }
     window.document.addEventListener('fullscreenchange', handleFullscreenChange)
@@ -341,6 +360,48 @@ function App() {
       setNotice('No fue posible mostrar el lienzo en pantalla completa.')
     }
   }, [])
+
+  const enterSewingMode = useCallback(async () => {
+    if (!(documentRef.current.guideSteps?.length ?? 0)) {
+      setNotice('Añade o genera un recorrido antes de iniciar el modo cosido.')
+      return
+    }
+
+    const workspace = workspaceRef.current
+    setShowGuideSteps(true)
+    setIsFullscreenPanelOpen(false)
+    setIsSewingMode(true)
+    window.requestAnimationFrame(() => canvasRef.current?.fit())
+
+    if (!workspace?.requestFullscreen || window.document.fullscreenElement === workspace) return
+    try {
+      await workspace.requestFullscreen()
+    } catch {
+      // El modo sigue ocupando toda la ventana aunque el navegador rechace su pantalla completa.
+    }
+  }, [])
+
+  const exitSewingMode = useCallback(async () => {
+    setIsSewingMode(false)
+    if (window.document.fullscreenElement === workspaceRef.current) {
+      try {
+        await window.document.exitFullscreen()
+      } catch {
+        window.requestAnimationFrame(() => canvasRef.current?.fit())
+      }
+    } else {
+      window.requestAnimationFrame(() => canvasRef.current?.fit())
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isSewingMode) return
+    const handleSewingEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') void exitSewingMode()
+    }
+    window.addEventListener('keydown', handleSewingEscape)
+    return () => window.removeEventListener('keydown', handleSewingEscape)
+  }, [exitSewingMode, isSewingMode])
 
   useEffect(() => {
     if (!preparedImport || !importAnalysisJob) return
@@ -716,7 +777,11 @@ function App() {
   }, [effectiveImportResult, getEditorSnapshot, imageImport, rememberEditorChange])
 
   const handleSaveProject = () => {
-    const name = projectName.trim() || 'Patrón sin título'
+    const name = projectName.trim()
+    if (!name) {
+      setNotice(PROJECT_NAME_REQUIRED_NOTICE)
+      return
+    }
     const project: BeadStudioProject = {
       format: 'bead-studio-project',
       version: 1,
@@ -728,6 +793,7 @@ function App() {
         referenceMode,
         traceImage,
         showGuideSteps,
+        completedGuideSteps: [...completedGuideStepKeys],
       },
     }
 
@@ -760,6 +826,12 @@ function App() {
       setReferenceMode(project.editor.traceImage ? project.editor.referenceMode : 'floating')
       setTraceImage(project.editor.traceImage)
       setShowGuideSteps(project.editor.showGuideSteps ?? true)
+      const openedGuideKeys = new Set(
+        (openedDocument.guideSteps ?? []).map((step) => `${step.row}:${step.column}`),
+      )
+      setCompletedGuideStepKeys(new Set(
+        (project.editor.completedGuideSteps ?? []).filter((key) => openedGuideKeys.has(key)),
+      ))
       setTool('paint')
       traceImageRef.current = project.editor.traceImage
       referenceModeRef.current = project.editor.traceImage ? project.editor.referenceMode : 'floating'
@@ -776,6 +848,31 @@ function App() {
       const next = paintCells(documentRef.current, positions, paintColor)
       documentRef.current = next
       setDocument(next)
+    },
+    [],
+  )
+
+  const handleReplaceColor = useCallback(
+    (sourceColor: string | null, replacementColor: string) => {
+      if (!sourceColor) {
+        setNotice('Haz clic sobre una cuenta pintada para reemplazar ese color.')
+        return
+      }
+
+      const current = documentRef.current
+      const affectedCount = Object.values(current.cells).filter(
+        (cellColor) => cellColor.toLowerCase() === sourceColor.toLowerCase(),
+      ).length
+      const next = replacePatternColor(current, sourceColor, replacementColor)
+      if (next === current) {
+        setNotice('El color seleccionado ya es el color de esas cuentas.')
+        return
+      }
+      documentRef.current = next
+      setDocument(next)
+      setNotice(
+        `${affectedCount} ${affectedCount === 1 ? 'cuenta reemplazada' : 'cuentas reemplazadas'}.`,
+      )
     },
     [],
   )
@@ -821,6 +918,7 @@ function App() {
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (imageImport !== null || window.document.querySelector('dialog[open]')) return
+      if (isSewingMode) return
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
@@ -842,6 +940,7 @@ function App() {
         }
       }
       if (event.key.toLowerCase() === 'b') setTool('paint')
+      if (event.key.toLowerCase() === 'g') setTool('fill')
       if (event.key.toLowerCase() === 'e') setTool('erase')
       if (event.key.toLowerCase() === 'v') setTool('select')
       if (event.key.toLowerCase() === 'h') setTool('pan')
@@ -854,7 +953,14 @@ function App() {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [handleRedo, handleUndo, hasTraceImage, imageImport, referenceMode])
+  }, [
+    handleRedo,
+    handleUndo,
+    hasTraceImage,
+    imageImport,
+    isSewingMode,
+    referenceMode,
+  ])
 
   const enforceMirrorDimensions = useCallback(
     (base: PatternDocument, mode: MirrorMode) => {
@@ -917,14 +1023,16 @@ function App() {
   }
 
   const clearPattern = () => {
-    if (!Object.keys(document.cells).length && !guideStepCount) return
-    if (!window.confirm('¿Quieres borrar todos los colores y números del patrón?')) return
+    if (!Object.keys(document.cells).length && !guideStepCount && !projectName.trim()) return
+    if (!window.confirm('¿Quieres iniciar un diseño nuevo y borrar el contenido actual?')) return
     rememberEditorChange(getEditorSnapshot())
     setDocument((current) => {
       const next = { ...current, cells: {}, guideSteps: [] }
       documentRef.current = next
       return next
     })
+    setCompletedGuideStepKeys(new Set())
+    setProjectName('')
     setNotice('El patrón quedó limpio.')
   }
 
@@ -959,6 +1067,15 @@ function App() {
     setDocument(next)
   }, [])
 
+  const toggleCompletedGuideStep = useCallback((key: string) => {
+    setCompletedGuideStepKeys((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
   const clearGuideSteps = () => {
     if (!guideStepCount) return
     if (!window.confirm('¿Quieres borrar toda la numeración del recorrido?')) return
@@ -967,6 +1084,7 @@ function App() {
       documentRef.current = next
       return next
     })
+    setCompletedGuideStepKeys(new Set())
     setNotice('Guía de tejido eliminada.')
   }
 
@@ -989,6 +1107,7 @@ function App() {
     documentRef.current = next
     setDocument(next)
     setShowGuideSteps(true)
+    setCompletedGuideStepKeys(new Set())
 
     if (!result.continuous) {
       const sectionDetail = result.componentCount > 1
@@ -1129,12 +1248,15 @@ function App() {
             </div>
           </div>
           <div className="titlebar-context" aria-label="Proyecto actual">
-            <span className="workspace-indicator" aria-hidden="true" />
+            <span className="titlebar-project-label" aria-hidden="true">
+              Nombre de proyecto
+            </span>
             <input
               className="titlebar-project-name"
               value={projectName}
               maxLength={120}
               onChange={(event) => setProjectName(event.target.value)}
+              placeholder="Escribe un nombre"
               aria-label="Nombre del proyecto"
               title="Nombre del proyecto"
             />
@@ -1169,7 +1291,11 @@ function App() {
 
       <div
         ref={workspaceRef}
-        className={`workspace ${isCanvasFullscreen && isFullscreenPanelOpen ? 'fullscreen-panel-open' : ''}`}
+        className={[
+          'workspace',
+          isCanvasFullscreen && isFullscreenPanelOpen ? 'fullscreen-panel-open' : '',
+          isSewingMode ? 'sewing-mode' : '',
+        ].filter(Boolean).join(' ')}
       >
         <Toolbar
           tool={tool}
@@ -1178,7 +1304,7 @@ function App() {
           presetColors={documentPaletteColors}
           onColorChange={(nextColor) => {
             setColor(nextColor)
-            setTool('paint')
+            setTool((current) => current === 'fill' ? 'fill' : 'paint')
           }}
           guideStepCount={guideStepCount}
           numberingMode={numberingMode}
@@ -1189,7 +1315,7 @@ function App() {
           showGuideSteps={showGuideSteps}
           onGuideVisibilityChange={setShowGuideSteps}
           onClearGuide={clearGuideSteps}
-          isInactive={isCanvasFullscreen && !isFullscreenPanelOpen}
+          isInactive={isSewingMode || (isCanvasFullscreen && !isFullscreenPanelOpen)}
         />
 
         <section className="canvas-area" aria-label="Área de trabajo">
@@ -1285,6 +1411,20 @@ function App() {
                 <DesignToolButtons tool={tool} onToolChange={setTool} />
               </div>
             </div>
+            <button
+              type="button"
+              className="sewing-mode-entry"
+              onClick={() => void enterSewingMode()}
+              disabled={guideStepCount === 0}
+              title={
+                guideStepCount > 0
+                  ? 'Abrir el lienzo para coser y marcar el recorrido'
+                  : 'Añade un recorrido para usar el modo cosido'
+              }
+            >
+              <InterfaceIcon name="sewing" />
+              <span>Modo cosido</span>
+            </button>
             <div className="zoom-controls" aria-label="Controles de zoom">
               <button type="button" onClick={() => canvasRef.current?.zoomOut()} aria-label="Alejar">−</button>
               <span>{zoomPercent}%</span>
@@ -1319,27 +1459,42 @@ function App() {
                 )
               }}
               onPaint={handlePaint}
+              onReplaceColor={handleReplaceColor}
               onMoveSelection={handleMoveSelection}
               onGuideStepsAdd={handleGuideStepsAdd}
               onGuideStepsRemove={handleGuideStepsRemove}
               numberingMode={numberingMode}
               showGuideSteps={showGuideSteps}
+              isSewingMode={isSewingMode}
+              completedGuideStepKeys={completedGuideStepKeys}
+              onGuideStepToggle={toggleCompletedGuideStep}
               onStrokeStart={handleStrokeStart}
               onStrokeEnd={handleStrokeEnd}
               onZoomChange={setZoomPercent}
             />
-            {traceImage && referenceMode === 'floating' && traceImage.visible && (
+            {!isSewingMode && traceImage && referenceMode === 'floating' && traceImage.visible && (
               <FloatingReference
                 image={traceImage}
                 onHide={() => updateTraceImage({ visible: false })}
                 onUseAsTrace={() => changeReferenceMode('trace')}
               />
             )}
-            <div className="canvas-hint">
-              <span><kbd>H</kbd> para mover</span>
-              <span className="hint-divider" />
-              <span>Rueda para zoom</span>
-            </div>
+            {isSewingMode && (
+              <div className="sewing-mode-controls">
+                <span aria-live="polite">
+                  {completedGuideStepCount} / {guideStepCount}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void exitSewingMode()}
+                  aria-label="Salir del modo cosido"
+                  title="Salir del modo cosido (Esc)"
+                >
+                  <InterfaceIcon name="fullscreen-exit" />
+                  <span>Salir</span>
+                </button>
+              </div>
+            )}
           </div>
           <footer className="canvas-statusbar" aria-label="Estado del documento">
             <span className="status-tool">
@@ -1356,7 +1511,7 @@ function App() {
           </footer>
         </section>
 
-        {isCanvasFullscreen && (
+        {isCanvasFullscreen && !isSewingMode && (
           <button
             type="button"
             className="fullscreen-panel-toggle"
@@ -1409,8 +1564,13 @@ function App() {
       />
 
       {notice && (
-        <div className="toast" role="status">
-          <span aria-hidden="true">✓</span>
+        <div
+          className={`toast ${notice === PROJECT_NAME_REQUIRED_NOTICE ? 'is-error' : ''}`}
+          role="status"
+        >
+          <span aria-hidden="true">
+            {notice === PROJECT_NAME_REQUIRED_NOTICE ? '×' : '✓'}
+          </span>
           {notice}
         </div>
       )}

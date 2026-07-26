@@ -16,6 +16,7 @@ const PALETTE = [
 
 export type InterfaceIconName =
   | 'brush'
+  | 'fill'
   | 'eraser'
   | 'select'
   | 'hand'
@@ -24,6 +25,7 @@ export type InterfaceIconName =
   | 'open'
   | 'scan'
   | 'export'
+  | 'sewing'
   | 'fullscreen'
   | 'fullscreen-exit'
   | 'chevron-down'
@@ -36,6 +38,7 @@ const TOOLS: Array<{
   icon: InterfaceIconName
 }> = [
   { id: 'paint', label: 'Pincel', shortcut: 'B', icon: 'brush' },
+  { id: 'fill', label: 'Cubeta: reemplazar color', shortcut: 'G', icon: 'fill' },
   { id: 'erase', label: 'Borrador', shortcut: 'E', icon: 'eraser' },
   { id: 'select', label: 'Selección', shortcut: 'V', icon: 'select' },
   { id: 'pan', label: 'Mover lienzo', shortcut: 'H', icon: 'hand' },
@@ -92,6 +95,13 @@ export function InterfaceIcon({
           <path d="M11.6 14.1c-1.4-1.4-3.8-1.2-4.8.6-.6 1.1-.8 2.3-2.8 3.3 2.8 1.5 5.7 1.6 7.5-.2 1-1 1.1-2.6.1-3.7Z" />
         </>
       )}
+      {name === 'fill' && (
+        <>
+          <path d="m5 10 7-7 8 8-7 7H5v-8Z" />
+          <path d="m8.5 6.5 8 8" />
+          <path d="M19.5 15.5s-2.5 2.8-2.5 4.2a2.5 2.5 0 0 0 5 0c0-1.4-2.5-4.2-2.5-4.2Z" />
+        </>
+      )}
       {name === 'eraser' && (
         <>
           <path d="m13.5 4 6.5 6.5-8.7 8.7H7L3.5 15.7 13.5 4Z" />
@@ -139,6 +149,14 @@ export function InterfaceIcon({
       {name === 'export' && (
         <>
           <path d="M5 14v6h14v-6M12 3v12M7.5 10.5 12 15l4.5-4.5" />
+        </>
+      )}
+      {name === 'sewing' && (
+        <>
+          <path d="M5 19 19 5" />
+          <path d="M16.5 4.5 19.5 7.5" />
+          <path d="M4.5 19.5c2.4 1.1 4.8.2 6.1-1.1 1.6-1.6 3.2-1.7 4.8-.2 1.1 1 2.5 1.2 4.1.2" />
+          <circle cx="18.1" cy="5.9" r=".7" />
         </>
       )}
       {name === 'fullscreen' && (
@@ -247,6 +265,11 @@ export function Toolbar({
                 </button>
               ))}
             </div>
+            {tool === 'fill' && (
+              <p className="fill-tool-help">
+                Haz clic sobre una cuenta para reemplazar todas las cuentas de ese color.
+              </p>
+            )}
             {hasHiddenColors && (
               <button
                 type="button"

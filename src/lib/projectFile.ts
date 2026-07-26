@@ -2,6 +2,7 @@ import { isPatternDocument } from './patternState'
 import type {
   BeadStudioProject,
   MirrorMode,
+  PatternDocument,
   ReferenceMode,
   TraceImage,
 } from '../types'
@@ -44,6 +45,20 @@ function isTraceImage(value: unknown): value is TraceImage {
   )
 }
 
+function areCompletedGuideSteps(value: unknown, document: PatternDocument) {
+  if (value === undefined) return true
+  if (!Array.isArray(value)) return false
+  const routeKeys = new Set(
+    (document.guideSteps ?? []).map((step) => `${step.row}:${step.column}`),
+  )
+  const uniqueKeys = new Set<string>()
+  return value.every((key) => {
+    if (typeof key !== 'string' || !routeKeys.has(key) || uniqueKeys.has(key)) return false
+    uniqueKeys.add(key)
+    return true
+  })
+}
+
 export function isBeadStudioProject(value: unknown): value is BeadStudioProject {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<BeadStudioProject>
@@ -62,6 +77,7 @@ export function isBeadStudioProject(value: unknown): value is BeadStudioProject 
     MIRROR_MODES.includes(editor.mirrorMode as MirrorMode) &&
     REFERENCE_MODES.includes(editor.referenceMode as ReferenceMode) &&
     (editor.showGuideSteps === undefined || typeof editor.showGuideSteps === 'boolean') &&
+    areCompletedGuideSteps(editor.completedGuideSteps, candidate.document) &&
     (editor.traceImage === null || isTraceImage(editor.traceImage))
   )
 }

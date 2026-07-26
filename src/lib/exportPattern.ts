@@ -194,7 +194,10 @@ export function drawPatternContent(
 export function drawGuideSteps(
   context: CanvasRenderingContext2D,
   document: PatternDocument,
-  options: { showRoute?: boolean } = {},
+  options: {
+    showRoute?: boolean
+    completedStepKeys?: ReadonlySet<string>
+  } = {},
 ) {
   const steps = (document.guideSteps ?? []).filter((step) =>
     isNumberableGuidePoint(step.row, step.column, document.rows, document.columns),
@@ -228,25 +231,30 @@ export function drawGuideSteps(
     const label = String(index + 1)
     const centerX = PATTERN_PADDING + step.column * GRID_STEP
     const centerY = PATTERN_PADDING + step.row * GRID_STEP
+    const isCompleted = options.completedStepKeys?.has(beadKey(step.row, step.column)) ?? false
     const width = Math.max(13, context.measureText(label).width + 5)
     const isStart = index === 0
     const isEnd = steps.length > 1 && index === steps.length - 1
 
     context.beginPath()
     context.roundRect(centerX - width / 2, centerY - 6.5, width, 13, 4)
-    context.fillStyle = isStart
-      ? GUIDE_START_FILL
-      : isEnd
-        ? GUIDE_END_FILL
-        : 'rgba(255, 255, 255, 0.94)'
+    context.fillStyle = isCompleted
+      ? '#16734b'
+      : isStart
+        ? GUIDE_START_FILL
+        : isEnd
+          ? GUIDE_END_FILL
+          : 'rgba(255, 255, 255, 0.94)'
     context.fill()
-    context.strokeStyle = isStart
-      ? GUIDE_START_STROKE
-      : isEnd
-        ? GUIDE_END_STROKE
-        : 'rgba(94, 85, 77, 0.55)'
+    context.strokeStyle = isCompleted
+      ? '#73d7a5'
+      : isStart
+        ? GUIDE_START_STROKE
+        : isEnd
+          ? GUIDE_END_STROKE
+          : 'rgba(94, 85, 77, 0.55)'
     context.stroke()
-    context.fillStyle = isStart || isEnd ? '#ffffff' : '#282421'
+    context.fillStyle = isCompleted || isStart || isEnd ? '#ffffff' : '#282421'
     context.fillText(label, centerX, centerY + 0.25)
   })
   context.restore()

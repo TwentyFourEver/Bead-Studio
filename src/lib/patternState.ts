@@ -148,6 +148,25 @@ export function paintCells(
   return { ...document, cells }
 }
 
+export function replacePatternColor(
+  document: PatternDocument,
+  sourceColor: string,
+  replacementColor: string,
+) {
+  const normalizedSource = sourceColor.toLowerCase()
+  if (normalizedSource === replacementColor.toLowerCase()) return document
+
+  let changed = false
+  const cells = Object.fromEntries(
+    Object.entries(document.cells).map(([key, cellColor]) => {
+      if (cellColor.toLowerCase() !== normalizedSource) return [key, cellColor]
+      changed = true
+      return [key, replacementColor]
+    }),
+  )
+  return changed ? { ...document, cells } : document
+}
+
 export function moveCells(
   document: PatternDocument,
   selectedKeys: Iterable<string>,

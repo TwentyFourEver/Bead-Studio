@@ -1,4 +1,4 @@
-export type ToolMode = 'paint' | 'erase' | 'select' | 'pan' | 'trace' | 'number'
+export type ToolMode = 'paint' | 'fill' | 'erase' | 'select' | 'pan' | 'trace' | 'number'
 export type NumberingMode = 'manual' | 'automatic'
 export type GuideStartDirection = 'right' | 'left' | 'top' | 'bottom'
 export type MirrorMode = 'none' | 'vertical' | 'horizontal' | 'both'
@@ -63,6 +63,7 @@ export interface BeadStudioProject {
     referenceMode: ReferenceMode
     traceImage: TraceImage | null
     showGuideSteps?: boolean
+    completedGuideSteps?: string[]
   }
 }
 

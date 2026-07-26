@@ -23,6 +23,7 @@ const project: BeadStudioProject = {
     mirrorMode: 'both',
     referenceMode: 'floating',
     traceImage: null,
+    completedGuideSteps: [],
   },
 }
 
@@ -42,5 +43,24 @@ describe('archivos de proyecto', () => {
   it('crea un nombre de archivo seguro con la extensión propia', () => {
     expect(projectFilename('Pulsera de verano')).toBe('pulsera-de-verano.beadstudio')
     expect(projectFilename('  ')).toBe('patron-bisuteria.beadstudio')
+  })
+
+  it('conserva y valida el progreso del modo cosido', () => {
+    const sewingProject: BeadStudioProject = {
+      ...project,
+      document: {
+        ...project.document,
+        guideSteps: [{ row: 0, column: 1 }],
+      },
+      editor: {
+        ...project.editor,
+        completedGuideSteps: ['0:1'],
+      },
+    }
+    expect(parseProjectFile(serializeProjectFile(sewingProject))).toEqual(sewingProject)
+    expect(isBeadStudioProject({
+      ...sewingProject,
+      editor: { ...sewingProject.editor, completedGuideSteps: ['2:1'] },
+    })).toBe(false)
   })
 })

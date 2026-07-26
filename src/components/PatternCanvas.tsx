@@ -10,6 +10,7 @@ import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent }
 import {
   BEAD_MINOR_RADIUS,
   GRID_STEP,
+  PATTERN_PADDING,
   beadKey,
   clampScale,
   fitPatternInViewport,
@@ -53,11 +54,15 @@ interface PatternCanvasProps {
   traceImage: TraceImage | null
   onTraceMove: (deltaX: number, deltaY: number) => void
   onPaint: (positions: Array<[number, number]>, color: string | null) => void
+  onReplaceColor: (sourceColor: string | null, replacementColor: string) => void
   onMoveSelection: (selectedKeys: string[], rowDelta: number, columnDelta: number) => void
   onGuideStepsAdd: (positions: Array<[number, number]>) => void
   onGuideStepsRemove: (positions: Array<[number, number]>) => void
   numberingMode: NumberingMode
   showGuideSteps: boolean
+  isSewingMode: boolean
+  completedGuideStepKeys: ReadonlySet<string>
+  onGuideStepToggle: (key: string) => void
   onStrokeStart: () => void
   onStrokeEnd: () => void
   onZoomChange: (percent: number) => void
@@ -137,11 +142,15 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       traceImage,
       onTraceMove,
       onPaint,
+      onReplaceColor,
       onMoveSelection,
       onGuideStepsAdd,
       onGuideStepsRemove,
       numberingMode,
       showGuideSteps,
+      isSewingMode,
+      completedGuideStepKeys,
+      onGuideStepToggle,
       onStrokeStart,
       onStrokeEnd,
       onZoomChange,
@@ -248,6 +257,11 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     }, [document.columns, document.rows, fit, viewport.height, viewport.width])
 
     useEffect(() => {
+      if (!isSewingMode || !viewport.width || !viewport.height) return
+      fit()
+    }, [fit, isSewingMode, viewport.height, viewport.width])
+
+    useEffect(() => {
       if (!traceSource) return
       const image = new Image()
       let cancelled = false
@@ -319,7 +333,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         showPaintedBeads: false,
       })
 
-      if (mirrorMode !== 'none') {
+      if (!isSewingMode && mirrorMode !== 'none') {
         context.save()
         context.lineCap = 'round'
         context.setLineDash([9 / view.scale, 6 / view.scale])
@@ -366,9 +380,13 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       }
 
       drawPatternContent(context, document, { showEmptyBeads: false })
-      if (showGuideSteps) drawGuideSteps(context, document)
+      if (showGuideSteps) {
+        drawGuideSteps(context, document, {
+          completedStepKeys: isSewingMode ? completedGuideStepKeys : undefined,
+        })
+      }
 
-      if (tool === 'trace' && traceImage?.visible) {
+      if (!isSewingMode && tool === 'trace' && traceImage?.visible) {
         const traceSize = getTraceImageSize(traceImage)
         context.save()
         context.strokeStyle = '#bd6042'
@@ -378,7 +396,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         context.restore()
       }
 
-      if (tool === 'select') {
+      if (!isSewingMode && tool === 'select') {
         context.save()
         const hasMovePreview = selectionDelta.row !== 0 || selectionDelta.column !== 0
         for (const key of selectedKeys) {
@@ -429,7 +447,9 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       }
       context.restore()
     }, [
+      completedGuideStepKeys,
       document,
+      isSewingMode,
       mirrorMode,
       selectedKeys,
       selectionBox,
@@ -499,6 +519,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       const handleKeyDown = (event: KeyboardEvent) => {
         if (window.document.querySelector('dialog[open]')) return
         if (isEditableTarget(event.target)) return
+        if (isSewingMode) return
         if (tool === 'select' && event.key === 'Escape') {
           setSelectedKeys(new Set())
           setSelectionBox(null)
@@ -542,7 +563,15 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         window.removeEventListener('keyup', handleKeyUp)
         window.removeEventListener('blur', handleBlur)
       }
-    }, [document.cells, onPaint, onStrokeEnd, onStrokeStart, selectedKeys, tool])
+    }, [
+      document.cells,
+      isSewingMode,
+      onPaint,
+      onStrokeEnd,
+      onStrokeStart,
+      selectedKeys,
+      tool,
+    ])
 
     const paintAtWorldPoint = useCallback(
       (worldX: number, worldY: number, visited: Set<string>, eraseOverride: boolean) => {
@@ -565,6 +594,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
 
     const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
       if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
+      if (isSewingMode && event.button === 2) return
       const canvas = canvasRef.current
       if (!canvas) return
       event.preventDefault()
@@ -572,7 +602,8 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       const rect = canvas.getBoundingClientRect()
       const world = screenToWorld(event.clientX, event.clientY, rect, viewRef.current)
       const shouldPan =
-        event.button === 1 || (event.button === 0 && (spaceHeld || tool === 'pan'))
+        event.button === 1 ||
+        (event.button === 0 && (isSewingMode || spaceHeld || tool === 'pan'))
       const eraseOverride = event.button === 2
       const traceSize = traceImage ? getTraceImageSize(traceImage) : null
       const shouldMoveTrace =
@@ -585,6 +616,20 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         world.x <= traceImage.x + traceSize.width &&
         world.y >= traceImage.y &&
         world.y <= traceImage.y + traceSize.height
+
+      if (!shouldPan && tool === 'fill') {
+        if (event.button === 0) {
+          const bead = hitTestBead(world.x, world.y, document.rows, document.columns)
+          const sourceColor = bead
+            ? document.cells[beadKey(bead.row, bead.column)] ?? null
+            : null
+          onStrokeStart()
+          onReplaceColor(sourceColor, color)
+          onStrokeEnd()
+        }
+        canvas.releasePointerCapture(event.pointerId)
+        return
+      }
 
       if (!shouldPan && tool === 'number') {
         if (numberingMode === 'manual' && (event.button === 0 || event.button === 2)) {
@@ -875,7 +920,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       }
     }
 
-    const handleWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
+    const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
       event.preventDefault()
       const canvas = canvasRef.current
       if (!canvas) return
@@ -895,20 +940,22 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
 
     const cursor = isPanning || isMovingSelection
       ? 'grabbing'
-      : spaceHeld || tool === 'pan'
+      : isSewingMode || spaceHeld || tool === 'pan'
         ? 'grab'
         : tool === 'erase'
           ? 'cell'
-          : tool === 'trace'
-            ? 'move'
-            : tool === 'number'
-              ? numberingMode === 'manual' ? 'pointer' : 'default'
-            : tool === 'select'
-              ? 'default'
-              : 'crosshair'
+          : tool === 'fill'
+            ? 'pointer'
+            : tool === 'trace'
+              ? 'move'
+              : tool === 'number'
+                ? numberingMode === 'manual' ? 'pointer' : 'default'
+                : tool === 'select'
+                  ? 'default'
+                  : 'crosshair'
 
     return (
-      <div ref={containerRef} className="canvas-shell">
+      <div ref={containerRef} className="canvas-shell" onWheel={handleWheel}>
         <canvas
           ref={canvasRef}
           aria-label="Lienzo del patrón de mostacillas"
@@ -919,9 +966,27 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           onPointerMove={handlePointerMove}
           onPointerUp={endInteraction}
           onPointerCancel={endInteraction}
-          onWheel={handleWheel}
         />
         <canvas ref={guideFlowCanvasRef} aria-hidden="true" className="guide-flow-canvas" />
+        {isSewingMode && showGuideSteps && (document.guideSteps ?? []).map((step, index) => {
+          const key = `${step.row}:${step.column}`
+          const isCompleted = completedGuideStepKeys.has(key)
+          return (
+            <button
+              key={key}
+              type="button"
+              className="sewing-step-hotspot"
+              style={{
+                left: view.offsetX + (PATTERN_PADDING + step.column * GRID_STEP) * view.scale,
+                top: view.offsetY + (PATTERN_PADDING + step.row * GRID_STEP) * view.scale,
+              }}
+              aria-label={`Paso ${index + 1}: ${isCompleted ? 'completado' : 'pendiente'}`}
+              aria-pressed={isCompleted}
+              title={`${isCompleted ? 'Marcar pendiente' : 'Marcar completado'}: paso ${index + 1}`}
+              onClick={() => onGuideStepToggle(key)}
+            />
+          )
+        })}
       </div>
     )
   },
