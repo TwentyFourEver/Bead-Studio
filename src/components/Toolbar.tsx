@@ -26,6 +26,7 @@ export type InterfaceIconName =
   | 'export'
   | 'fullscreen'
   | 'fullscreen-exit'
+  | 'chevron-down'
   | 'trash'
 
 const TOOLS: Array<{
@@ -69,11 +70,22 @@ interface ToolbarProps {
   showGuideSteps: boolean
   onGuideVisibilityChange: (visible: boolean) => void
   onClearGuide: () => void
+  isInactive?: boolean
 }
 
-export function InterfaceIcon({ name }: { name: InterfaceIconName }) {
+export function InterfaceIcon({
+  name,
+  className = '',
+}: {
+  name: InterfaceIconName
+  className?: string
+}) {
   return (
-    <svg className="interface-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <svg
+      className={`interface-icon ${className}`.trim()}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
       {name === 'brush' && (
         <>
           <path d="m14.5 4.5 5 5-8.2 8.2" />
@@ -139,6 +151,7 @@ export function InterfaceIcon({ name }: { name: InterfaceIconName }) {
           <path d="M4 9h5V4M20 9h-5V4M15 20v-5h5M9 20v-5H4" />
         </>
       )}
+      {name === 'chevron-down' && <path d="m7 9.5 5 5 5-5" />}
       {name === 'trash' && (
         <>
           <path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7" />
@@ -190,6 +203,7 @@ export function Toolbar({
   showGuideSteps,
   onGuideVisibilityChange,
   onClearGuide,
+  isInactive = false,
 }: ToolbarProps) {
   const [showAllColors, setShowAllColors] = useState(false)
   const paletteColors = [...new Set([...presetColors, ...PALETTE].map((item) => item.toLowerCase()))]
@@ -197,7 +211,13 @@ export function Toolbar({
   const hasHiddenColors = paletteColors.length > 10
 
   return (
-    <aside className="tool-panel inspector-panel" aria-label="Propiedades de la herramienta">
+    <aside
+      id="workspace-tool-panel"
+      className="tool-panel inspector-panel"
+      aria-label="Propiedades de la herramienta"
+      aria-hidden={isInactive || undefined}
+      inert={isInactive || undefined}
+    >
         <div className="tool-panel-scroll">
           <section className="panel-section first-section">
             <SectionTitle>Color activo</SectionTitle>
@@ -239,7 +259,10 @@ export function Toolbar({
                     ? 'Ocultar colores adicionales'
                     : `Mostrar ${paletteColors.length - 10} ${paletteColors.length - 10 === 1 ? 'color más' : 'colores más'}`}
                 </span>
-                <span className="palette-toggle-chevron" aria-hidden="true" />
+                <InterfaceIcon
+                  name="chevron-down"
+                  className={`menu-chevron ${showAllColors ? 'is-open' : ''}`}
+                />
               </button>
             )}
           </section>

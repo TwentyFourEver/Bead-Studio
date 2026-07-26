@@ -41,6 +41,12 @@ const GUIDE_START_FILL = '#2f8f5b'
 const GUIDE_START_STROKE = '#226b43'
 const GUIDE_END_FILL = '#9a472f'
 const GUIDE_END_STROKE = '#743321'
+const GIF_FRAME_COUNT = 16
+const GIF_FRAME_DELAY_MS = 60
+const GIF_MAX_SIDE = 1600
+const GIF_GUIDE_MARGIN = 22
+
+export type GifExportResult = 'exported' | 'empty-pattern' | 'missing-route'
 
 export function getGuideRoutePoints(document: PatternDocument): GuideRoutePoint[] {
   return (document.guideSteps ?? [])
@@ -250,6 +256,7 @@ export function drawGuideFlow(
   context: CanvasRenderingContext2D,
   route: GuideRouteAnimation,
   elapsedMilliseconds: number,
+  options: { pulseEndpoints?: boolean } = {},
 ) {
   if (!route.points.length) return
 
@@ -276,23 +283,25 @@ export function drawGuideFlow(
     context.clearRect(point.x - labelWidth / 2 - 1, point.y - 7.5, labelWidth + 2, 15)
   }
 
-  const pulse = 0.25 + ((Math.sin(elapsedMilliseconds / 180) + 1) / 2) * 0.75
-  const drawEndpointPulse = (index: number, color: string) => {
-    const point = route.points[index]
-    const labelWidth = Math.max(13, context.measureText(String(index + 1)).width + 5)
-    context.beginPath()
-    context.roundRect(point.x - labelWidth / 2 - 2, point.y - 8.5, labelWidth + 4, 17, 6)
-    context.globalAlpha = pulse
-    context.strokeStyle = color
-    context.lineWidth = 2.5
-    context.shadowColor = color
-    context.shadowBlur = 5 + pulse * 4
-    context.stroke()
-  }
+  if (options.pulseEndpoints !== false) {
+    const pulse = 0.25 + ((Math.sin(elapsedMilliseconds / 180) + 1) / 2) * 0.75
+    const drawEndpointPulse = (index: number, color: string) => {
+      const point = route.points[index]
+      const labelWidth = Math.max(13, context.measureText(String(index + 1)).width + 5)
+      context.beginPath()
+      context.roundRect(point.x - labelWidth / 2 - 2, point.y - 8.5, labelWidth + 4, 17, 6)
+      context.globalAlpha = pulse
+      context.strokeStyle = color
+      context.lineWidth = 2.5
+      context.shadowColor = color
+      context.shadowBlur = 5 + pulse * 4
+      context.stroke()
+    }
 
-  drawEndpointPulse(0, GUIDE_START_FILL)
-  if (route.points.length > 1) {
-    drawEndpointPulse(route.points.length - 1, GUIDE_END_FILL)
+    drawEndpointPulse(0, GUIDE_START_FILL)
+    if (route.points.length > 1) {
+      drawEndpointPulse(route.points.length - 1, GUIDE_END_FILL)
+    }
   }
   context.restore()
 }
@@ -316,17 +325,149 @@ export function exportPatternPng(document: PatternDocument, showGuideSteps = tru
 
   canvas.toBlob((blob) => {
     if (!blob) return
-    const url = URL.createObjectURL(blob)
-    const link = window.document.createElement('a')
-    link.href = url
     const columns = gridDimensionToBeadCount(document.columns)
     const rows = gridDimensionToBeadCount(document.rows)
-    link.download = `patron-bisuteria-${columns}x${rows}.png`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, `patron-bisuteria-${columns}x${rows}.png`)
   }, 'image/png')
 
   return true
+}
+
+export async function exportPatternGif(
+  document: PatternDocument,
+): Promise<GifExportResult> {
+  const paintedBounds = getPaintedPatternBounds(document)
+  if (!paintedBounds) return 'empty-pattern'
+
+  const route = getGuideRouteAnimation(document)
+  if (route.points.length < 2 || route.length <= 0) return 'missing-route'
+
+  const exportBounds = getGifExportBounds(paintedBounds, route)
+  const { GIFEncoder, quantize, applyPalette } = await import('gifenc')
+  const exportScale = Math.min(
+    2,
+    GIF_MAX_SIDE / Math.max(exportBounds.width, exportBounds.height),
+  )
+  const width = Math.max(1, Math.ceil(exportBounds.width * exportScale))
+  const height = Math.max(1, Math.ceil(exportBounds.height * exportScale))
+  const baseCanvas = window.document.createElement('canvas')
+  const overlayCanvas = window.document.createElement('canvas')
+  const frameCanvas = window.document.createElement('canvas')
+
+  for (const canvas of [baseCanvas, overlayCanvas, frameCanvas]) {
+    canvas.width = width
+    canvas.height = height
+  }
+
+  const baseContext = baseCanvas.getContext('2d')
+  const overlayContext = overlayCanvas.getContext('2d')
+  const frameContext = frameCanvas.getContext('2d', { willReadFrequently: true })
+  if (!baseContext || !overlayContext || !frameContext) {
+    throw new Error('No fue posible preparar el GIF.')
+  }
+
+  renderPattern(baseContext, document, {
+    scale: exportScale,
+    showGuideSteps: true,
+    showGuideRoute: true,
+    viewport: exportBounds,
+  })
+
+  const gif = GIFEncoder()
+  const transparent = document.background.mode === 'transparent'
+  const paletteFormat = transparent ? 'rgba4444' : 'rgb565'
+  let palette: number[][] | null = null
+  let transparentIndex = 0
+
+  for (let frameIndex = 0; frameIndex < GIF_FRAME_COUNT; frameIndex += 1) {
+    overlayContext.setTransform(1, 0, 0, 1, 0, 0)
+    overlayContext.clearRect(0, 0, width, height)
+    overlayContext.setTransform(
+      exportScale,
+      0,
+      0,
+      exportScale,
+      -exportBounds.x * exportScale,
+      -exportBounds.y * exportScale,
+    )
+    drawGuideFlow(
+      overlayContext,
+      route,
+      frameIndex * GIF_FRAME_DELAY_MS,
+      { pulseEndpoints: false },
+    )
+
+    frameContext.setTransform(1, 0, 0, 1, 0, 0)
+    frameContext.clearRect(0, 0, width, height)
+    frameContext.drawImage(baseCanvas, 0, 0)
+    frameContext.drawImage(overlayCanvas, 0, 0)
+    const rgba = frameContext.getImageData(0, 0, width, height).data
+
+    if (!palette) {
+      palette = quantize(rgba, 256, {
+        format: paletteFormat,
+        oneBitAlpha: transparent,
+      })
+      if (transparent) {
+        transparentIndex = Math.max(
+          0,
+          palette.findIndex((color) => color[3] === 0),
+        )
+      }
+    }
+
+    const indexedFrame = applyPalette(rgba, palette, paletteFormat)
+    gif.writeFrame(indexedFrame, width, height, {
+      palette: frameIndex === 0 ? palette : undefined,
+      delay: GIF_FRAME_DELAY_MS,
+      repeat: 0,
+      transparent,
+      transparentIndex,
+      dispose: transparent ? 2 : 0,
+    })
+
+    if ((frameIndex + 1) % 4 === 0) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+    }
+  }
+
+  gif.finish()
+  const bytes = gif.bytes()
+  const buffer = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer
+  const columns = gridDimensionToBeadCount(document.columns)
+  const rows = gridDimensionToBeadCount(document.rows)
+  downloadBlob(
+    new Blob([buffer], { type: 'image/gif' }),
+    `patron-bisuteria-${columns}x${rows}.gif`,
+  )
+  return 'exported'
+}
+
+function getGifExportBounds(
+  paintedBounds: PatternBounds,
+  route: GuideRouteAnimation,
+): PatternBounds {
+  const routeMinX = Math.min(...route.points.map((point) => point.x)) - GIF_GUIDE_MARGIN
+  const routeMinY = Math.min(...route.points.map((point) => point.y)) - GIF_GUIDE_MARGIN
+  const routeMaxX = Math.max(...route.points.map((point) => point.x)) + GIF_GUIDE_MARGIN
+  const routeMaxY = Math.max(...route.points.map((point) => point.y)) + GIF_GUIDE_MARGIN
+  const x = Math.min(paintedBounds.x, routeMinX)
+  const y = Math.min(paintedBounds.y, routeMinY)
+  const right = Math.max(paintedBounds.x + paintedBounds.width, routeMaxX)
+  const bottom = Math.max(paintedBounds.y + paintedBounds.height, routeMaxY)
+  return { x, y, width: right - x, height: bottom - y }
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob)
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = fileName
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 function darkenHex(hex: string, amount: number) {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PatternCanvas, type PatternCanvasHandle } from './components/PatternCanvas'
-import { HeaderControls } from './components/HeaderControls'
+import { HeaderControls, type ExportFormat } from './components/HeaderControls'
 import { FloatingReference } from './components/FloatingReference'
 import { ImageImportDialog } from './components/ImageImportDialog'
 import { DesignToolButtons, InterfaceIcon, Toolbar } from './components/Toolbar'
@@ -11,7 +11,7 @@ import {
   gridDimensionToBeadCount,
   isNumberableGuidePoint,
 } from './lib/geometry'
-import { exportPatternPng } from './lib/exportPattern'
+import { exportPatternGif, exportPatternPng } from './lib/exportPattern'
 import {
   DEFAULT_IMAGE_ANALYSIS_OPTIONS,
   gridToSourcePoint,
@@ -219,6 +219,7 @@ function App() {
   )
   const [zoomPercent, setZoomPercent] = useState(100)
   const [notice, setNotice] = useState<string | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
   const [historyAvailability, setHistoryAvailability] = useState({
     canUndo: false,
     canRedo: false,
@@ -230,6 +231,7 @@ function App() {
   const [guideStartDirection, setGuideStartDirection] =
     useState<GuideStartDirection>('top')
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false)
+  const [isFullscreenPanelOpen, setIsFullscreenPanelOpen] = useState(true)
   const [imageImport, setImageImport] = useState<ImageImportSession | null>(null)
   const hasTraceImage = traceImage !== null
   const guideStepCount = document.guideSteps?.length ?? 0
@@ -239,7 +241,7 @@ function App() {
     [document.cells],
   )
   const canvasRef = useRef<PatternCanvasHandle>(null)
-  const canvasAreaRef = useRef<HTMLElement>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const projectInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const documentRef = useRef(document)
@@ -314,7 +316,9 @@ function App() {
 
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsCanvasFullscreen(window.document.fullscreenElement === canvasAreaRef.current)
+      const isFullscreen = window.document.fullscreenElement === workspaceRef.current
+      setIsCanvasFullscreen(isFullscreen)
+      setIsFullscreenPanelOpen(isFullscreen)
       window.requestAnimationFrame(() => canvasRef.current?.fit())
     }
     window.document.addEventListener('fullscreenchange', handleFullscreenChange)
@@ -322,16 +326,16 @@ function App() {
   }, [])
 
   const toggleCanvasFullscreen = useCallback(async () => {
-    const canvasArea = canvasAreaRef.current
-    if (!canvasArea || !canvasArea.requestFullscreen) {
+    const workspace = workspaceRef.current
+    if (!workspace || !workspace.requestFullscreen) {
       setNotice('La pantalla completa no está disponible en este navegador.')
       return
     }
     try {
-      if (window.document.fullscreenElement === canvasArea) {
+      if (window.document.fullscreenElement === workspace) {
         await window.document.exitFullscreen()
       } else {
-        await canvasArea.requestFullscreen()
+        await workspace.requestFullscreen()
       }
     } catch {
       setNotice('No fue posible mostrar el lienzo en pantalla completa.')
@@ -1068,6 +1072,35 @@ function App() {
     if (tool === 'trace') setTool('paint')
   }
 
+  const handleExport = useCallback(async (format: ExportFormat) => {
+    if (format === 'png') {
+      const exported = exportPatternPng(document, showGuideSteps)
+      if (!exported) setNotice('Pinta al menos una cuenta antes de exportar.')
+      return
+    }
+
+    setIsExporting(true)
+    setNotice('Creando el GIF animado…')
+    try {
+      const result = await exportPatternGif(document)
+      if (result === 'empty-pattern') {
+        setNotice('Pinta al menos una cuenta antes de exportar.')
+      } else if (result === 'missing-route') {
+        setNotice('Añade al menos dos pasos al recorrido para crear el GIF.')
+      } else {
+        setNotice('GIF exportado con las líneas animadas del recorrido.')
+      }
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'No fue posible crear el GIF animado.',
+      )
+    } finally {
+      setIsExporting(false)
+    }
+  }, [document, showGuideSteps])
+
   const changeReferenceMode = (mode: ReferenceMode) => {
     referenceModeRef.current = mode
     setReferenceMode(mode)
@@ -1128,15 +1161,16 @@ function App() {
           onTraceUpload={handleTraceUpload}
           onTraceChange={updateTraceImage}
           onTraceRemove={removeTraceImage}
-          onExport={() => {
-            const exported = exportPatternPng(document, showGuideSteps)
-            if (!exported) setNotice('Pinta al menos una cuenta antes de exportar.')
-          }}
+          onExport={handleExport}
+          isExporting={isExporting}
           onClearDesign={clearPattern}
         />
       </header>
 
-      <div className="workspace">
+      <div
+        ref={workspaceRef}
+        className={`workspace ${isCanvasFullscreen && isFullscreenPanelOpen ? 'fullscreen-panel-open' : ''}`}
+      >
         <Toolbar
           tool={tool}
           onToolChange={setTool}
@@ -1155,9 +1189,10 @@ function App() {
           showGuideSteps={showGuideSteps}
           onGuideVisibilityChange={setShowGuideSteps}
           onClearGuide={clearGuideSteps}
+          isInactive={isCanvasFullscreen && !isFullscreenPanelOpen}
         />
 
-        <section ref={canvasAreaRef} className="canvas-area" aria-label="Área de trabajo">
+        <section className="canvas-area" aria-label="Área de trabajo">
           <div className="canvas-topbar">
             <div className="canvas-topbar-scroll">
               <div className="canvas-command-group" aria-label="Archivo y documento">
@@ -1320,6 +1355,31 @@ function App() {
             </span>
           </footer>
         </section>
+
+        {isCanvasFullscreen && (
+          <button
+            type="button"
+            className="fullscreen-panel-toggle"
+            onClick={() => setIsFullscreenPanelOpen((current) => !current)}
+            aria-controls="workspace-tool-panel"
+            aria-expanded={isFullscreenPanelOpen}
+            aria-label={
+              isFullscreenPanelOpen
+                ? 'Ocultar panel de herramientas'
+                : 'Mostrar panel de herramientas'
+            }
+            title={
+              isFullscreenPanelOpen
+                ? 'Ocultar panel de herramientas'
+                : 'Mostrar panel de herramientas'
+            }
+          >
+            <InterfaceIcon
+              name="chevron-down"
+              className="fullscreen-panel-chevron"
+            />
+          </button>
+        )}
       </div>
 
       <ImageImportDialog
