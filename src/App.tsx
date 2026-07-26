@@ -1322,10 +1322,6 @@ function App() {
           <div className="canvas-topbar">
             <div className="canvas-topbar-scroll">
               <div className="canvas-command-group" aria-label="Archivo y documento">
-                <span className="document-meta">
-                  {gridDimensionToBeadCount(document.columns)} ×{' '}
-                  {gridDimensionToBeadCount(document.rows)}
-                </span>
                 <button type="button" className="topbar-action" onClick={handleSaveProject} title="Guardar proyecto">
                   <InterfaceIcon name="save" />
                   <span>Guardar</span>

@@ -1460,16 +1460,6 @@ kbd {
   align-items: center;
 }
 
-.document-meta {
-  padding: 3px 6px;
-  color: #a3aab5;
-  font-size: 8px;
-  font-variant-numeric: tabular-nums;
-  background: #22252a;
-  border: 1px solid #353a42;
-  border-radius: 3px;
-}
-
 .history-controls {
   display: flex;
   gap: 2px;
@@ -2369,12 +2359,6 @@ kbd {
 
   .canvas-command-group {
     gap: 3px;
-  }
-
-  .document-meta {
-    display: inline-flex;
-    min-height: 27px;
-    align-items: center;
   }
 
   .history-button {
