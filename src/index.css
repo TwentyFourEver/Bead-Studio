@@ -222,15 +222,6 @@ button:disabled {
   font-weight: 560;
 }
 
-.titlebar-version {
-  margin-left: auto;
-  color: #69717d;
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
 .header-controls {
   display: flex;
   min-width: 0;
@@ -2196,10 +2187,6 @@ kbd {
     padding: 0 6px;
   }
 
-  .titlebar-version {
-    display: none;
-  }
-
   .palette {
     gap: 7px;
   }
@@ -2278,10 +2265,6 @@ kbd {
 
   .titlebar-context {
     margin-left: 0;
-  }
-
-  .titlebar-version {
-    display: none;
   }
 
   .header-controls {

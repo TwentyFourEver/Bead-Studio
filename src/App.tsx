@@ -1261,7 +1261,6 @@ function App() {
               title="Nombre del proyecto"
             />
           </div>
-          <div className="titlebar-version">Patrón de cuentas</div>
         </div>
         <HeaderControls
           mirrorMode={mirrorMode}

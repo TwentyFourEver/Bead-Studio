@@ -9,7 +9,7 @@ export const MIN_BEAD_COUNT = 2
 export const MAX_BEAD_COUNT = 199
 export const MAX_DIMENSION = MAX_BEAD_COUNT * 2 - 1
 export const IMPORT_VISIBLE_MARGIN = 5
-export const MIN_SCALE = 0.25
+export const MIN_SCALE = 0.1
 export const MAX_SCALE = 6
 
 export function beadKey(row: number, column: number) {
