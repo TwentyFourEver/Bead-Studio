@@ -3,6 +3,7 @@ import { PatternCanvas, type PatternCanvasHandle } from './components/PatternCan
 import { HeaderControls, type ExportFormat } from './components/HeaderControls'
 import { FloatingReference } from './components/FloatingReference'
 import { ImageImportDialog } from './components/ImageImportDialog'
+import { ImageImportSourceDialog } from './components/ImageImportSourceDialog'
 import { DesignToolButtons, InterfaceIcon, Toolbar } from './components/Toolbar'
 import {
   beadCountToGridDimension,
@@ -239,6 +240,7 @@ function App() {
   const [isSewingMode, setIsSewingMode] = useState(false)
   const [completedGuideStepKeys, setCompletedGuideStepKeys] =
     useState<Set<string>>(() => new Set())
+  const [isImageImportSourceOpen, setIsImageImportSourceOpen] = useState(false)
   const [imageImport, setImageImport] = useState<ImageImportSession | null>(null)
   const hasTraceImage = traceImage !== null
   const guideStepCount = document.guideSteps?.length ?? 0
@@ -620,6 +622,24 @@ function App() {
     }
   }, [])
 
+  const startImageImport = useCallback((file: File) => {
+    setIsImageImportSourceOpen(false)
+    void handleAnalyzeImage(file)
+  }, [handleAnalyzeImage])
+
+  useEffect(() => {
+    if (!isImageImportSourceOpen) return
+    const handlePaste = (event: ClipboardEvent) => {
+      const files = Array.from(event.clipboardData?.files ?? [])
+      const imageFile = files.find((file) => file.type.startsWith('image/'))
+      if (!imageFile) return
+      event.preventDefault()
+      startImageImport(imageFile)
+    }
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [isImageImportSourceOpen, startImageImport])
+
   const updateImageAnalysisOptions = useCallback((patch: Partial<ImageAnalysisOptions>) => {
     setImageImport((current) => {
       if (!current) return current
@@ -917,7 +937,7 @@ function App() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (imageImport !== null || window.document.querySelector('dialog[open]')) return
+      if (imageImport !== null || isImageImportSourceOpen || window.document.querySelector('dialog[open]')) return
       if (isSewingMode) return
       if (
         event.target instanceof HTMLInputElement ||
@@ -958,6 +978,7 @@ function App() {
     handleUndo,
     hasTraceImage,
     imageImport,
+    isImageImportSourceOpen,
     isSewingMode,
     referenceMode,
   ])
@@ -1349,7 +1370,7 @@ function App() {
                 <button
                   type="button"
                   className="topbar-action"
-                  onClick={() => imageInputRef.current?.click()}
+                  onClick={() => setIsImageImportSourceOpen(true)}
                   title="Convertir imagen"
                 >
                   <InterfaceIcon name="scan" />
@@ -1363,7 +1384,7 @@ function App() {
                   tabIndex={-1}
                   onChange={(event) => {
                     const file = event.target.files?.[0]
-                    if (file) void handleAnalyzeImage(file)
+                    if (file) startImageImport(file)
                     event.currentTarget.value = ''
                   }}
                 />
@@ -1531,6 +1552,13 @@ function App() {
           </button>
         )}
       </div>
+
+      <ImageImportSourceDialog
+        open={isImageImportSourceOpen}
+        onCancel={() => setIsImageImportSourceOpen(false)}
+        onChooseFile={() => imageInputRef.current?.click()}
+        onFileSelected={startImageImport}
+      />
 
       <ImageImportDialog
         open={imageImport !== null}
