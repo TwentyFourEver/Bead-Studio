@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PatternCanvas, type PatternCanvasHandle } from './components/PatternCanvas'
 import { HeaderControls, type ExportFormat } from './components/HeaderControls'
 import { FloatingReference } from './components/FloatingReference'
+import { ReferenceControls } from './components/ReferenceControls'
 import { ImageImportDialog } from './components/ImageImportDialog'
 import { ImageImportSourceDialog } from './components/ImageImportSourceDialog'
 import { DesignToolButtons, InterfaceIcon, Toolbar } from './components/Toolbar'
@@ -34,6 +35,8 @@ import {
   type EditorSnapshot,
 } from './lib/cellHistory'
 import { generateAutomaticGuide } from './lib/guideNumbering'
+import { loadCustomColors, mergeCustomColors, saveCustomColors } from './lib/customPalette'
+import { extractReferenceColors, findAdjacentEmptyBeads } from './lib/designSuggestions'
 import { downloadProjectFile, parseProjectFile } from './lib/projectFile'
 import {
   loadPattern,
@@ -52,6 +55,7 @@ import type {
   ReferenceMode,
   ToolMode,
   TraceImage,
+  SymmetryAxes,
 } from './types'
 
 const TOOL_LABELS: Record<ToolMode, string> = {
@@ -217,6 +221,9 @@ function App() {
   const [projectName, setProjectName] = useState('')
   const [tool, setTool] = useState<ToolMode>('paint')
   const [color, setColor] = useState('#14b8a6')
+  const [customColors, setCustomColors] = useState(() =>
+    mergeCustomColors(loadCustomColors(), Object.values(document.cells)),
+  )
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none')
   const [draftRows, setDraftRows] = useState(() => gridDimensionToBeadCount(document.rows))
   const [draftColumns, setDraftColumns] = useState(() =>
@@ -231,6 +238,20 @@ function App() {
   })
   const [traceImage, setTraceImage] = useState<TraceImage | null>(null)
   const [referenceMode, setReferenceMode] = useState<ReferenceMode>('floating')
+  const [referencePalette, setReferencePalette] = useState<{
+    src: string; colors: string[]; error: boolean
+  } | null>(null)
+  const [showEmptySuggestions, setShowEmptySuggestions] = useState(true)
+  const referenceSource = traceImage?.src
+  const referenceColorsStatus = !referenceSource ? 'idle' : referencePalette?.src !== referenceSource
+    ? 'loading' : referencePalette.error ? 'error' : 'ready'
+  const referenceColors = referenceColorsStatus === 'ready' ? referencePalette!.colors : []
+  const adjacentEmptyBeads = useMemo(() => findAdjacentEmptyBeads(document), [document])
+  const symmetryAxes = document.symmetryAxes ?? {
+    row: Math.floor((document.rows - 1) / 2),
+    column: Math.floor((document.columns - 1) / 2),
+  }
+  const referencePanelRef = useRef<HTMLElement>(null)
   const [showGuideSteps, setShowGuideSteps] = useState(true)
   const [numberingMode, setNumberingMode] = useState<NumberingMode>('manual')
   const [guideStartDirection, setGuideStartDirection] =
@@ -250,6 +271,12 @@ function App() {
     () => paletteFromCells(document.cells).map(({ color: paletteColor }) => paletteColor),
     [document.cells],
   )
+  useEffect(() => {
+    setCustomColors((current) => mergeCustomColors(current, documentPaletteColors))
+  }, [documentPaletteColors])
+  useEffect(() => {
+    try { saveCustomColors(customColors) } catch { /* Keep the palette in memory if storage is full. */ }
+  }, [customColors])
   const canvasRef = useRef<PatternCanvasHandle>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const projectInputRef = useRef<HTMLInputElement>(null)
@@ -333,6 +360,32 @@ function App() {
   useEffect(() => {
     referenceModeRef.current = referenceMode
   }, [referenceMode])
+
+  useEffect(() => {
+    if (!referenceSource) return
+    let cancelled = false
+    const image = new Image()
+    const fail = () => {
+      if (!cancelled) setReferencePalette({ src: referenceSource, colors: [], error: true })
+    }
+    image.onerror = fail
+    image.onload = () => {
+      if (cancelled) return
+      try {
+        const sample = window.document.createElement('canvas')
+        const scale = Math.min(1, 256 / Math.max(image.naturalWidth, image.naturalHeight))
+        sample.width = Math.max(1, Math.round(image.naturalWidth * scale))
+        sample.height = Math.max(1, Math.round(image.naturalHeight * scale))
+        const context = sample.getContext('2d', { willReadFrequently: true })
+        if (!context) { fail(); return }
+        context.drawImage(image, 0, 0, sample.width, sample.height)
+        const colors = extractReferenceColors(context.getImageData(0, 0, sample.width, sample.height).data)
+        setReferencePalette({ src: referenceSource, colors, error: false })
+      } catch { fail() }
+    }
+    image.src = referenceSource
+    return () => { cancelled = true }
+  }, [referenceSource])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -809,6 +862,7 @@ function App() {
       document,
       editor: {
         color,
+        customColors: mergeCustomColors(customColors, [color, ...documentPaletteColors]),
         mirrorMode,
         referenceMode,
         traceImage,
@@ -842,6 +896,9 @@ function App() {
       setDraftRows(gridDimensionToBeadCount(openedDocument.rows))
       setDraftColumns(gridDimensionToBeadCount(openedDocument.columns))
       setColor(project.editor.color)
+      setCustomColors((current) => mergeCustomColors(current, [
+        ...(project.editor.customColors ?? []), project.editor.color, ...Object.values(openedDocument.cells),
+      ]))
       setMirrorMode(project.editor.mirrorMode)
       setReferenceMode(project.editor.traceImage ? project.editor.referenceMode : 'floating')
       setTraceImage(project.editor.traceImage)
@@ -865,6 +922,7 @@ function App() {
 
   const handlePaint = useCallback(
     (positions: Array<[number, number]>, paintColor: string | null) => {
+      if (paintColor) setCustomColors((current) => mergeCustomColors(current, [paintColor]))
       const next = paintCells(documentRef.current, positions, paintColor)
       documentRef.current = next
       setDocument(next)
@@ -904,7 +962,8 @@ function App() {
   const handleStrokeEnd = useCallback(() => {
     const snapshot = strokeSnapshotRef.current
     strokeSnapshotRef.current = null
-    if (!snapshot || snapshot.document === documentRef.current) return
+    if (!snapshot || (snapshot.document === documentRef.current &&
+      snapshot.traceImage === traceImageRef.current && snapshot.referenceMode === referenceModeRef.current)) return
     rememberEditorChange(snapshot)
   }, [rememberEditorChange])
 
@@ -958,7 +1017,9 @@ function App() {
           handleUndo()
           return
         }
+        return
       }
+      if (event.altKey) return
       if (event.key.toLowerCase() === 'b') setTool('paint')
       if (event.key.toLowerCase() === 'g') setTool('fill')
       if (event.key.toLowerCase() === 'e') setTool('erase')
@@ -1047,6 +1108,7 @@ function App() {
     if (!Object.keys(document.cells).length && !guideStepCount && !projectName.trim()) return
     if (!window.confirm('¿Quieres iniciar un diseño nuevo y borrar el contenido actual?')) return
     rememberEditorChange(getEditorSnapshot())
+    setCustomColors((current) => mergeCustomColors(current, Object.values(documentRef.current.cells)))
     setDocument((current) => {
       const next = { ...current, cells: {}, guideSteps: [] }
       documentRef.current = next
@@ -1197,11 +1259,10 @@ function App() {
   }
 
   const updateTraceImage = (patch: Partial<TraceImage>) => {
-    setTraceImage((current) => {
-      const next = current ? { ...current, ...patch } : current
-      traceImageRef.current = next
-      return next
-    })
+    const current = traceImageRef.current
+    const next = current ? { ...current, ...patch } : current
+    traceImageRef.current = next
+    setTraceImage(next)
   }
 
   const removeTraceImage = () => {
@@ -1252,6 +1313,21 @@ function App() {
     if (mode === 'floating' && tool === 'trace') setTool('paint')
   }
 
+  const updateSymmetryAxes = (axes: SymmetryAxes) => {
+    const current = documentRef.current
+    const next = { ...current, symmetryAxes: {
+      row: Math.max(0, Math.min(current.rows - 1, Math.round(axes.row))),
+      column: Math.max(0, Math.min(current.columns - 1, Math.round(axes.column))),
+    } }
+    documentRef.current = next
+    setDocument(next)
+  }
+
+  const setSymmetryFromPanel = (axes: SymmetryAxes) => {
+    rememberEditorChange(getEditorSnapshot())
+    updateSymmetryAxes(axes)
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -1284,8 +1360,6 @@ function App() {
           </div>
         </div>
         <HeaderControls
-          mirrorMode={mirrorMode}
-          onMirrorModeChange={handleMirrorModeChange}
           rows={draftRows}
           columns={draftColumns}
           onRowsChange={setDraftRows}
@@ -1295,14 +1369,6 @@ function App() {
           backgroundColor={document.background.color}
           onBackgroundModeChange={(mode) => updateBackground({ mode })}
           onBackgroundColorChange={(backgroundColor) => updateBackground({ color: backgroundColor })}
-          tool={tool}
-          onToolChange={setTool}
-          traceImage={traceImage}
-          referenceMode={referenceMode}
-          onReferenceModeChange={changeReferenceMode}
-          onTraceUpload={handleTraceUpload}
-          onTraceChange={updateTraceImage}
-          onTraceRemove={removeTraceImage}
           onExport={handleExport}
           isExporting={isExporting}
           onClearDesign={clearPattern}
@@ -1321,9 +1387,12 @@ function App() {
           tool={tool}
           onToolChange={setTool}
           color={color}
-          presetColors={documentPaletteColors}
+          presetColors={mergeCustomColors(customColors, documentPaletteColors)}
+          referenceColors={referenceColors}
+          referenceColorsStatus={referenceColorsStatus}
           onColorChange={(nextColor) => {
             setColor(nextColor)
+            setCustomColors((current) => mergeCustomColors(current, [nextColor]))
             setTool((current) => current === 'fill' ? 'fill' : 'paint')
           }}
           guideStepCount={guideStepCount}
@@ -1336,7 +1405,50 @@ function App() {
           onGuideVisibilityChange={setShowGuideSteps}
           onClearGuide={clearGuideSteps}
           isInactive={isSewingMode || (isCanvasFullscreen && !isFullscreenPanelOpen)}
-        />
+        >
+          <section ref={referencePanelRef} className="panel-section reference-panel">
+            <h2 className="panel-title">Referencia</h2>
+            <ReferenceControls traceImage={traceImage} referenceMode={referenceMode} tool={tool}
+              onToolChange={setTool} onReferenceModeChange={changeReferenceMode}
+              onTraceUpload={handleTraceUpload} onTraceChange={updateTraceImage} onTraceRemove={removeTraceImage} />
+          </section>
+          <section className="panel-section symmetry-panel">
+            <h2 className="panel-title">Simetría</h2>
+            <label className="inspector-select"><span>Espejo</span>
+              <select value={mirrorMode} onChange={(event) => handleMirrorModeChange(event.target.value as MirrorMode)}>
+                <option value="none">Ninguna</option><option value="vertical">Lados</option>
+                <option value="horizontal">Arriba y abajo</option><option value="both">Ambos ejes</option>
+              </select>
+            </label>
+            {mirrorMode !== 'none' && <>
+              <p className="helper-text">Arrastra el botón de la línea en el lienzo o ajusta su posición aquí. El pincel y el borrador reflejan alrededor de ese eje.</p>
+              {(mirrorMode === 'vertical' || mirrorMode === 'both') &&
+                <label className="axis-slider"><span>Eje vertical</span>
+                  <input aria-label="Posición del eje vertical" type="range" min="0" max={document.columns - 1}
+                    value={symmetryAxes.column} onChange={(event) => setSymmetryFromPanel({ ...symmetryAxes, column: Number(event.target.value) })} />
+                  <output>{symmetryAxes.column + 1}</output>
+                </label>}
+              {(mirrorMode === 'horizontal' || mirrorMode === 'both') &&
+                <label className="axis-slider"><span>Eje horizontal</span>
+                  <input aria-label="Posición del eje horizontal" type="range" min="0" max={document.rows - 1}
+                    value={symmetryAxes.row} onChange={(event) => setSymmetryFromPanel({ ...symmetryAxes, row: Number(event.target.value) })} />
+                  <output>{symmetryAxes.row + 1}</output>
+                </label>}
+              <button type="button" className="secondary-button full-width" onClick={() => setSymmetryFromPanel({
+                row: Math.floor((document.rows - 1) / 2), column: Math.floor((document.columns - 1) / 2),
+              })}>Centrar ejes</button>
+            </>}
+          </section>
+          <section className="panel-section consistency-panel">
+            <h2 className="panel-title">Cuentas vacías adyacentes</h2>
+            <label className="suggestion-toggle"><input type="checkbox" checked={showEmptySuggestions}
+              onChange={(event) => setShowEmptySuggestions(event.target.checked)} />Marcar en rojo</label>
+            <p className="helper-text" aria-live="polite">
+              {adjacentEmptyBeads.size ? `${adjacentEmptyBeads.size} cuentas vacías junto al diseño. Se recomienda revisarlas y pintarlas si forman parte de la figura.`
+                : 'No hay cuentas vacías adyacentes.'}
+            </p>
+          </section>
+        </Toolbar>
 
         <section className="canvas-area" aria-label="Área de trabajo">
           <div className="canvas-topbar">
@@ -1426,6 +1538,10 @@ function App() {
               <div className="topbar-tools" role="toolbar" aria-label="Herramientas de diseño">
                 <DesignToolButtons tool={tool} onToolChange={setTool} />
               </div>
+              <button type="button" className="topbar-action" onClick={() => {
+                setIsFullscreenPanelOpen(true)
+                window.requestAnimationFrame(() => referencePanelRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
+              }} title="Abrir el apartado de referencia del panel lateral"><span aria-hidden="true">▧</span><span>Ver referencia</span></button>
             </div>
             <button
               type="button"
@@ -1468,11 +1584,14 @@ function App() {
               tool={tool}
               color={color}
               mirrorMode={mirrorMode}
+              symmetryAxes={symmetryAxes}
+              onSymmetryAxesChange={updateSymmetryAxes}
+              emptySuggestions={showEmptySuggestions ? adjacentEmptyBeads : undefined}
               traceImage={referenceMode === 'trace' ? traceImage : null}
+              onTraceResize={updateTraceImage}
               onTraceMove={(deltaX, deltaY) => {
-                setTraceImage((current) =>
-                  current ? { ...current, x: current.x + deltaX, y: current.y + deltaY } : current,
-                )
+                const current = traceImageRef.current
+                if (current) updateTraceImage({ x: current.x + deltaX, y: current.y + deltaY })
               }}
               onPaint={handlePaint}
               onReplaceColor={handleReplaceColor}

@@ -62,4 +62,16 @@ describe('geometría del patrón', () => {
     expect(isBeadCell(0, 1)).toBe(false)
     expect(getMirroredCells(0, 0, 4, 4, 'vertical')).toEqual([[0, 0]])
   })
+
+  it('refleja alrededor de ejes desplazados manteniendo la retícula válida', () => {
+    expect(getMirroredCells(1, 1, 9, 9, 'both', { row: 3, column: 2 }))
+      .toEqual([[1, 1], [1, 3], [5, 1], [5, 3]])
+    expect(getMirroredCells(2, 2, 7, 7, 'vertical', { row: 3, column: 2 }))
+      .toEqual([[2, 2]])
+  })
+
+  it('descarta reflejos fuera del lienzo para ejes cercanos a los bordes', () => {
+    expect(getMirroredCells(2, 4, 7, 7, 'both', { row: 0, column: 1 }))
+      .toEqual([[2, 4]])
+  })
 })

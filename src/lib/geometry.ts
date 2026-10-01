@@ -1,4 +1,4 @@
-import type { BeadGeometry, MirrorMode, ViewTransform } from '../types'
+import type { BeadGeometry, MirrorMode, SymmetryAxes, ViewTransform } from '../types'
 
 export const GRID_STEP = 20
 export const BEAD_MAJOR_RADIUS = 14
@@ -132,21 +132,28 @@ export function getMirroredCells(
   rows: number,
   columns: number,
   mirrorMode: MirrorMode,
+  axes?: SymmetryAxes,
 ) {
+  const mirroredRow = 2 * (axes?.row ?? (rows - 1) / 2) - row
+  const mirroredColumn = 2 * (axes?.column ?? (columns - 1) / 2) - column
   const candidates: Array<[number, number]> = [[row, column]]
   if (mirrorMode === 'vertical' || mirrorMode === 'both') {
-    candidates.push([row, columns - 1 - column])
+    candidates.push([row, mirroredColumn])
   }
   if (mirrorMode === 'horizontal' || mirrorMode === 'both') {
-    candidates.push([rows - 1 - row, column])
+    candidates.push([mirroredRow, column])
   }
   if (mirrorMode === 'both') {
-    candidates.push([rows - 1 - row, columns - 1 - column])
+    candidates.push([mirroredRow, mirroredColumn])
   }
 
   const unique = new Map<string, [number, number]>()
   for (const [candidateRow, candidateColumn] of candidates) {
-    if (isBeadCell(candidateRow, candidateColumn)) {
+    if (
+      Number.isInteger(candidateRow) && Number.isInteger(candidateColumn) &&
+      candidateRow < rows && candidateColumn < columns &&
+      isBeadCell(candidateRow, candidateColumn)
+    ) {
       unique.set(beadKey(candidateRow, candidateColumn), [candidateRow, candidateColumn])
     }
   }

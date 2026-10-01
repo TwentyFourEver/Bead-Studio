@@ -36,6 +36,9 @@ function isTraceImage(value: unknown): value is TraceImage {
     isFiniteNumber(candidate.scalePercent) &&
     candidate.scalePercent >= 10 &&
     candidate.scalePercent <= 300 &&
+    (candidate.widthFactor === undefined || (isFiniteNumber(candidate.widthFactor) && candidate.widthFactor > 0)) &&
+    (candidate.heightFactor === undefined || (isFiniteNumber(candidate.heightFactor) && candidate.heightFactor > 0)) &&
+    (candidate.keepProportions === undefined || typeof candidate.keepProportions === 'boolean') &&
     isFiniteNumber(candidate.x) &&
     isFiniteNumber(candidate.y) &&
     isFiniteNumber(candidate.opacity) &&
@@ -74,6 +77,8 @@ export function isBeadStudioProject(value: unknown): value is BeadStudioProject 
     !!editor &&
     typeof editor.color === 'string' &&
     COLOR_PATTERN.test(editor.color) &&
+    (editor.customColors === undefined || (Array.isArray(editor.customColors) &&
+      editor.customColors.every((color) => typeof color === 'string' && COLOR_PATTERN.test(color)))) &&
     MIRROR_MODES.includes(editor.mirrorMode as MirrorMode) &&
     REFERENCE_MODES.includes(editor.referenceMode as ReferenceMode) &&
     (editor.showGuideSteps === undefined || typeof editor.showGuideSteps === 'boolean') &&

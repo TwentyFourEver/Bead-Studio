@@ -1765,6 +1765,10 @@ kbd {
   pointer-events: auto;
 }
 
+.workspace:fullscreen.fullscreen-panel-open .canvas-area {
+  margin-right: var(--fullscreen-panel-width);
+}
+
 .workspace:fullscreen.sewing-mode .tool-panel {
   display: none;
   transform: translateX(100%);
@@ -3806,3 +3810,49 @@ kbd {
     animation-iteration-count: 1;
   }
 }
+
+/* Shared inspector controls, available inside the fullscreen workspace. */
+.reference-controls { display: grid; gap: 12px; }
+.reference-file-row { display: flex; gap: 8px; align-items: center; }
+.reference-file-row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.reference-controls .helper-text { margin: 0; }
+.reference-controls .trace-slider { margin: 0; }
+.reference-controls .trace-actions { margin: 0; }
+.reference-controls .reference-mode-grid button { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.reference-controls .reference-mode-grid button strong { font-size: 11px; }
+.reference-controls .reference-mode-grid button small { white-space: normal; }
+.reference-controls .trace-move-button { display: flex; align-items: center; justify-content: space-between; }
+.inspector-select { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.inspector-select select { flex: 1; min-width: 0; padding: 6px; color: var(--ui-text); background: var(--ui-control); border: 1px solid var(--ui-border); border-radius: 5px; }
+.axis-slider { display: grid; grid-template-columns: 85px minmax(0, 1fr) 24px; gap: 6px; align-items: center; margin: 12px 0; font-size: 11px; }
+.axis-slider input { width: 100%; accent-color: #c65334; }
+.axis-slider output { text-align: right; }
+.suggestion-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.suggestion-toggle input { accent-color: var(--ui-danger); }
+.shortcut-guide dl { display: grid; gap: 7px; margin: 0; }
+.shortcut-guide dl > div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.shortcut-guide dt, .shortcut-guide dd { margin: 0; font-size: 11px; color: var(--ui-text-secondary); }
+.shortcut-guide kbd { display: inline-block; padding: 2px 4px; border: 1px solid var(--ui-border); border-radius: 3px; color: var(--ui-text); background: var(--ui-bg); font-size: 10px; }
+.shortcut-guide dd button { padding: 0; text-align: left; color: inherit; background: transparent; border: 0; cursor: pointer; }
+.shortcut-guide dd button:hover { color: var(--ui-accent-hover); }
+.symmetry-axis-handle { position: absolute; z-index: 4; transform: translate(-50%, -50%); width: 32px; height: 32px; padding: 0; border: 2px solid white; border-radius: 8px; background: #c65334; color: white; box-shadow: 0 2px 6px rgb(0 0 0 / 35%); touch-action: none; }
+.symmetry-axis-handle.is-vertical { cursor: ew-resize; }
+.symmetry-axis-handle.is-horizontal { cursor: ns-resize; }
+
+.trace-resize-handle {
+  position: absolute;
+  z-index: 5;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  background: #fff;
+  border: 2px solid #bd6042;
+  border-radius: 3px;
+  box-shadow: 0 1px 5px rgb(0 0 0 / 35%);
+  touch-action: none;
+}
+.trace-resize-handle.corner-nw, .trace-resize-handle.corner-se { cursor: nwse-resize; }
+.trace-resize-handle.corner-ne, .trace-resize-handle.corner-sw { cursor: nesw-resize; }
+.trace-size-output { color: var(--ui-text-secondary); font-size: 11px; }
+.saved-palette-note { margin-top: 10px; }

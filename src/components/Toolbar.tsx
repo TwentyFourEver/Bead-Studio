@@ -63,6 +63,9 @@ interface ToolbarProps {
   onToolChange: (tool: ToolMode) => void
   color: string
   presetColors: string[]
+  referenceColors: string[]
+  referenceColorsStatus: 'idle' | 'loading' | 'ready' | 'error'
+  children?: ReactNode
   onColorChange: (color: string) => void
   guideStepCount: number
   numberingMode: NumberingMode
@@ -211,6 +214,9 @@ export function Toolbar({
   onToolChange,
   color,
   presetColors,
+  referenceColors,
+  referenceColorsStatus,
+  children,
   onColorChange,
   guideStepCount,
   numberingMode,
@@ -288,6 +294,47 @@ export function Toolbar({
                 />
               </button>
             )}
+            <p className="helper-text saved-palette-note">Los colores elegidos se conservan al limpiar el diseño.</p>
+          </section>
+
+          {referenceColorsStatus !== 'idle' && <section className="panel-section">
+            <SectionTitle>Colores de la referencia</SectionTitle>
+            <p className="helper-text">
+              {referenceColorsStatus === 'loading' ? 'Buscando colores…' : referenceColorsStatus === 'error'
+                ? 'No fue posible obtener los colores de esta imagen.' : referenceColors.length
+                  ? 'Colores recomendados. Haz clic para pintar.' : 'La imagen no contiene colores visibles.'}
+            </p>
+            <div className="palette" aria-label="Colores recomendados de la referencia">
+              {referenceColors.map((item) => <button type="button" key={item}
+                className={`swatch ${color.toLowerCase() === item ? 'is-selected' : ''}`}
+                style={{ backgroundColor: item }} title={item.toUpperCase()}
+                aria-label={`Usar color recomendado ${item}`} aria-pressed={color.toLowerCase() === item}
+                onClick={() => onColorChange(item)}>
+                {color.toLowerCase() === item && <span className="swatch-check" aria-hidden="true" />}
+              </button>)}
+            </div>
+          </section>}
+
+          {children}
+
+          <section className="panel-section shortcut-guide">
+            <SectionTitle>Guía de botones y atajos</SectionTitle>
+            <dl>
+              {TOOLS.map((item) => <div key={item.id}>
+                <dt><kbd>{item.shortcut}</kbd></dt>
+                <dd><button type="button" onClick={() => onToolChange(item.id)}>{item.label}</button></dd>
+              </div>)}
+              <div><dt><kbd>T</kbd></dt><dd>Mover referencia en Calcado</dd></div>
+              <div><dt><kbd>Espacio</kbd></dt><dd>Arrastrar lienzo</dd></div>
+              <div><dt><kbd>+ / −</kbd></dt><dd>Acercar / alejar (también rueda)</dd></div>
+              <div><dt><kbd>Clic derecho</kbd></dt><dd>Borrar; en N, quitar pasos</dd></div>
+              <div><dt><kbd>Ctrl+Z</kbd></dt><dd>Deshacer</dd></div>
+              <div><dt><kbd>Ctrl+Y</kbd></dt><dd>Rehacer (o Ctrl+Mayús+Z)</dd></div>
+              <div><dt><kbd>Mayús</kbd></dt><dd>Sumar a la selección con V</dd></div>
+              <div><dt><kbd>Ctrl+A</kbd></dt><dd>Seleccionar todas con V</dd></div>
+              <div><dt><kbd>Supr</kbd></dt><dd>Borrar selección (o Retroceso)</dd></div>
+              <div><dt><kbd>Esc</kbd></dt><dd>Deseleccionar / salir de pantalla completa</dd></div>
+            </dl>
           </section>
 
           <section className={`panel-section guide-panel ${tool === 'number' ? 'is-expanded' : ''}`}>

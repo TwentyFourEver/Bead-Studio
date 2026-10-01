@@ -48,6 +48,13 @@ export function isPatternDocument(value: unknown): value is PatternDocument {
   })
   if (!validCells) return false
 
+  if (candidate.symmetryAxes !== undefined) {
+    const axes = candidate.symmetryAxes
+    if (!axes || !Number.isInteger(axes.row) || !Number.isInteger(axes.column) ||
+      axes.row < 0 || axes.row >= candidate.rows! ||
+      axes.column < 0 || axes.column >= candidate.columns!) return false
+  }
+
   if (candidate.guideSteps === undefined) return true
   if (!Array.isArray(candidate.guideSteps)) return false
   const uniqueSteps = new Set<string>()
@@ -131,7 +138,11 @@ export function resizePattern(
     return isGuidePoint(row, column, rows, columns) ? [{ row, column }] : []
   })
 
-  return { ...document, rows, columns, cells, guideSteps }
+  const symmetryAxes = document.symmetryAxes ? {
+    row: Math.max(0, Math.min(rows - 1, document.symmetryAxes.row + shift.row)),
+    column: Math.max(0, Math.min(columns - 1, document.symmetryAxes.column + shift.column)),
+  } : undefined
+  return { ...document, rows, columns, cells, guideSteps, symmetryAxes }
 }
 
 export function paintCells(

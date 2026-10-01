@@ -6,12 +6,18 @@ export type BeadOrientation = 'vertical' | 'horizontal'
 export type BackgroundMode = 'transparent' | 'solid'
 export type ReferenceMode = 'floating' | 'trace'
 
+export interface SymmetryAxes {
+  row: number
+  column: number
+}
+
 export interface PatternDocument {
   version: 1
   rows: number
   columns: number
   cells: Record<string, string>
   guideSteps?: GuideStep[]
+  symmetryAxes?: SymmetryAxes
   background: {
     mode: BackgroundMode
     color: string
@@ -46,6 +52,9 @@ export interface TraceImage {
   naturalHeight: number
   baseScale: number
   scalePercent: number
+  widthFactor?: number
+  heightFactor?: number
+  keepProportions?: boolean
   x: number
   y: number
   opacity: number
@@ -59,6 +68,7 @@ export interface BeadStudioProject {
   document: PatternDocument
   editor: {
     color: string
+    customColors?: string[]
     mirrorMode: MirrorMode
     referenceMode: ReferenceMode
     traceImage: TraceImage | null
@@ -70,7 +80,7 @@ export interface BeadStudioProject {
 export function getTraceImageSize(trace: TraceImage) {
   const scale = trace.baseScale * (trace.scalePercent / 100)
   return {
-    width: trace.naturalWidth * scale,
-    height: trace.naturalHeight * scale,
+    width: trace.naturalWidth * scale * (trace.widthFactor ?? 1),
+    height: trace.naturalHeight * scale * (trace.heightFactor ?? 1),
   }
 }

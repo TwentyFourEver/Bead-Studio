@@ -20,6 +20,11 @@ const base: PatternDocument = {
 }
 
 describe('estado del patrón', () => {
+  it('mueve los ejes junto al diseño al cambiar de tamaño y los mantiene en los límites', () => {
+    const document = { ...base, symmetryAxes: { row: 2, column: 4 } }
+    expect(resizePattern(document, 7, 7).symmetryAxes).toEqual({ row: 3, column: 5 })
+    expect(resizePattern(document, 3, 3).symmetryAxes).toEqual({ row: 1, column: 2 })
+  })
   it('pinta y borra sin mutar el documento previo', () => {
     const painted = paintCells(base, [[0, 2]], '#abcdef')
     expect(painted.cells['0:2']).toBe('#abcdef')

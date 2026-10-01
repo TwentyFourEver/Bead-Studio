@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BeadStudioProject } from '../types'
 import { DEFAULT_PATTERN } from './patternState'
+import { getTraceImageSize, type TraceImage } from '../types'
 import {
   isBeadStudioProject,
   parseProjectFile,
@@ -28,6 +29,30 @@ const project: BeadStudioProject = {
 }
 
 describe('archivos de proyecto', () => {
+  it('conserva colores personales y las dimensiones ajustadas de la referencia', () => {
+    const traceImage: TraceImage = {
+      src: 'data:image/png;base64,test', name: 'test.png', naturalWidth: 200, naturalHeight: 100,
+      baseScale: 0.5, scalePercent: 100, widthFactor: 1.5, heightFactor: 2,
+      keepProportions: false, x: 20, y: 30, opacity: 0.5, visible: true,
+    }
+    const withReference = { ...project, editor: { ...project.editor, traceImage, customColors: ['#abcdef'] } }
+    const restored = parseProjectFile(serializeProjectFile(withReference))
+    expect(restored.editor.customColors).toEqual(['#abcdef'])
+    expect(getTraceImageSize(restored.editor.traceImage!)).toEqual({ width: 150, height: 100 })
+    expect(isBeadStudioProject({ ...withReference, editor: { ...withReference.editor, customColors: ['bad'] } })).toBe(false)
+    expect(isBeadStudioProject({ ...withReference,
+      editor: { ...withReference.editor, traceImage: { ...traceImage, widthFactor: -1 } } })).toBe(false)
+    expect(isBeadStudioProject({ ...withReference,
+      editor: { ...withReference.editor, traceImage: { ...traceImage, heightFactor: 0 } } })).toBe(false)
+  })
+  it('conserva ejes desplazados y sigue abriendo proyectos sin ejes personalizados', () => {
+    const adjusted = { ...project, document: { ...project.document, symmetryAxes: { row: 1, column: 2 } } }
+    expect(parseProjectFile(serializeProjectFile(adjusted)).document.symmetryAxes).toEqual({ row: 1, column: 2 })
+    expect(isBeadStudioProject(project)).toBe(true)
+    for (const symmetryAxes of [{ row: 5, column: 2 }, { row: 1.5, column: 2 }, { row: -1, column: 2 }]) {
+      expect(isBeadStudioProject({ ...adjusted, document: { ...adjusted.document, symmetryAxes } })).toBe(false)
+    }
+  })
   it('conserva el documento editable y las preferencias al serializar', () => {
     const restored = parseProjectFile(serializeProjectFile(project))
     expect(restored).toEqual(project)

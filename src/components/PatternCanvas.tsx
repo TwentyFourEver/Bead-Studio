@@ -29,6 +29,7 @@ import {
   getGuideRouteAnimation,
 } from '../lib/exportPattern'
 import { collectGuidePointsAlongSegment } from '../lib/guideDrag'
+import { resizeTraceFromCorner, type TraceCorner } from '../lib/traceResize'
 import {
   getTraceImageSize,
   type MirrorMode,
@@ -37,6 +38,7 @@ import {
   type ToolMode,
   type TraceImage,
   type ViewTransform,
+  type SymmetryAxes,
 } from '../types'
 
 export interface PatternCanvasHandle {
@@ -51,8 +53,12 @@ interface PatternCanvasProps {
   tool: ToolMode
   color: string
   mirrorMode: MirrorMode
+  symmetryAxes: SymmetryAxes
+  onSymmetryAxesChange: (axes: SymmetryAxes) => void
+  emptySuggestions?: ReadonlySet<string>
   traceImage: TraceImage | null
   onTraceMove: (deltaX: number, deltaY: number) => void
+  onTraceResize: (patch: Partial<TraceImage>) => void
   onPaint: (positions: Array<[number, number]>, color: string | null) => void
   onReplaceColor: (sourceColor: string | null, replacementColor: string) => void
   onMoveSelection: (selectedKeys: string[], rowDelta: number, columnDelta: number) => void
@@ -139,8 +145,12 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       tool,
       color,
       mirrorMode,
+      symmetryAxes,
+      onSymmetryAxesChange,
+      emptySuggestions,
       traceImage,
       onTraceMove,
+      onTraceResize,
       onPaint,
       onReplaceColor,
       onMoveSelection,
@@ -161,6 +171,10 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     const guideFlowCanvasRef = useRef<HTMLCanvasElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const interactionRef = useRef<PointerInteraction | null>(null)
+    const axisDragRef = useRef<{ axis: 'row' | 'column'; pointerId: number; offset: number } | null>(null)
+    const traceResizeRef = useRef<{
+      pointerId: number; corner: TraceCorner; image: TraceImage; startX: number; startY: number
+    } | null>(null)
     const viewRef = useRef<ViewTransform>(INITIAL_VIEW)
     const [view, setView] = useState<ViewTransform>(INITIAL_VIEW)
     const [viewport, setViewport] = useState({ width: 0, height: 0 })
@@ -340,7 +354,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
 
         const drawSymmetryAxes = () => {
           if (mirrorMode === 'vertical' || mirrorMode === 'both') {
-            const centerX = patternSize.width / 2
+            const centerX = PATTERN_PADDING + symmetryAxes.column * GRID_STEP
             context.beginPath()
             context.moveTo(centerX, -100000)
             context.lineTo(centerX, 100000)
@@ -348,7 +362,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           }
 
           if (mirrorMode === 'horizontal' || mirrorMode === 'both') {
-            const centerY = patternSize.height / 2
+            const centerY = PATTERN_PADDING + symmetryAxes.row * GRID_STEP
             context.beginPath()
             context.moveTo(-100000, centerY)
             context.lineTo(100000, centerY)
@@ -365,8 +379,8 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         drawSymmetryAxes()
 
         if (mirrorMode === 'both') {
-          const centerX = patternSize.width / 2
-          const centerY = patternSize.height / 2
+          const centerX = PATTERN_PADDING + symmetryAxes.column * GRID_STEP
+          const centerY = PATTERN_PADDING + symmetryAxes.row * GRID_STEP
           context.setLineDash([])
           context.beginPath()
           context.arc(centerX, centerY, 5 / view.scale, 0, Math.PI * 2)
@@ -380,13 +394,30 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       }
 
       drawPatternContent(context, document, { showEmptyBeads: false })
+      if (!isSewingMode && emptySuggestions?.size) {
+        context.save()
+        context.strokeStyle = '#dc2626'
+        context.fillStyle = 'rgba(220, 38, 38, 0.12)'
+        context.lineWidth = 1.7 / view.scale
+        context.setLineDash([4 / view.scale, 3 / view.scale])
+        for (const key of emptySuggestions) {
+          const position = parseBeadKey(key)
+          if (!position) continue
+          const bead = getBeadGeometry(position[0], position[1], document.rows)
+          context.beginPath()
+          context.ellipse(bead.centerX, bead.centerY, bead.radiusX, bead.radiusY, 0, 0, Math.PI * 2)
+          context.fill()
+          context.stroke()
+        }
+        context.restore()
+      }
       if (showGuideSteps) {
         drawGuideSteps(context, document, {
           completedStepKeys: isSewingMode ? completedGuideStepKeys : undefined,
         })
       }
 
-      if (!isSewingMode && tool === 'trace' && traceImage?.visible) {
+      if (!isSewingMode && traceImage?.visible) {
         const traceSize = getTraceImageSize(traceImage)
         context.save()
         context.strokeStyle = '#bd6042'
@@ -451,6 +482,8 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       document,
       isSewingMode,
       mirrorMode,
+      symmetryAxes,
+      emptySuggestions,
       selectedKeys,
       selectionBox,
       selectionDelta,
@@ -586,10 +619,11 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           document.rows,
           document.columns,
           mirrorMode,
+          symmetryAxes,
         )
         onPaint(positions, eraseOverride || tool === 'erase' ? null : color)
       },
-      [color, document.columns, document.rows, mirrorMode, onPaint, tool],
+      [color, document.columns, document.rows, mirrorMode, symmetryAxes, onPaint, tool],
     )
 
     const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -748,6 +782,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         setIsPanning(true)
       } else if (shouldMoveTrace) {
         setIsPanning(true)
+        onStrokeStart()
       } else {
         onStrokeStart()
         paintAtWorldPoint(world.x, world.y, interactionRef.current.visited, eraseOverride)
@@ -875,7 +910,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     const endInteraction = (event: ReactPointerEvent<HTMLCanvasElement>) => {
       const interaction = interactionRef.current
       if (!interaction || interaction.pointerId !== event.pointerId) return
-      if (interaction.kind === 'paint') onStrokeEnd()
+      if (interaction.kind === 'paint' || interaction.kind === 'trace') onStrokeEnd()
       if (interaction.kind === 'guide') {
         if (
           event.type === 'pointerup' &&
@@ -922,6 +957,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
 
     const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
       event.preventDefault()
+      if (traceResizeRef.current) return
       const canvas = canvasRef.current
       if (!canvas) return
       const rect = canvas.getBoundingClientRect()
@@ -954,6 +990,64 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
                   ? 'default'
                   : 'crosshair'
 
+    const startAxisDrag = (event: ReactPointerEvent<HTMLButtonElement>, axis: 'row' | 'column') => {
+      if (event.button !== 0 || !canvasRef.current) return
+      event.preventDefault()
+      const world = screenToWorld(event.clientX, event.clientY, canvasRef.current.getBoundingClientRect(), viewRef.current)
+      axisDragRef.current = { axis, pointerId: event.pointerId,
+        offset: (axis === 'column' ? world.x : world.y) - (PATTERN_PADDING + symmetryAxes[axis] * GRID_STEP) }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      onStrokeStart()
+    }
+
+    const moveAxis = (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = axisDragRef.current
+      if (!drag || drag.pointerId !== event.pointerId || !canvasRef.current) return
+      const world = screenToWorld(event.clientX, event.clientY, canvasRef.current.getBoundingClientRect(), viewRef.current)
+      const value = Math.round(((drag.axis === 'column' ? world.x : world.y) - drag.offset - PATTERN_PADDING) / GRID_STEP)
+      const maximum = (drag.axis === 'column' ? document.columns : document.rows) - 1
+      const snapped = Math.max(0, Math.min(maximum, value))
+      if (snapped !== symmetryAxes[drag.axis]) onSymmetryAxesChange({ ...symmetryAxes, [drag.axis]: snapped })
+    }
+
+    const endAxisDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (axisDragRef.current?.pointerId !== event.pointerId) return
+      axisDragRef.current = null
+      onStrokeEnd()
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    const startTraceResize = (event: ReactPointerEvent<HTMLButtonElement>, corner: TraceCorner) => {
+      if (event.button !== 0 || !traceImage || !canvasRef.current) return
+      event.preventDefault()
+      const world = screenToWorld(event.clientX, event.clientY, canvasRef.current.getBoundingClientRect(), viewRef.current)
+      traceResizeRef.current = { pointerId: event.pointerId, corner, image: traceImage, startX: world.x, startY: world.y }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      onStrokeStart()
+    }
+
+    const moveTraceResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = traceResizeRef.current
+      if (!drag || drag.pointerId !== event.pointerId || !canvasRef.current) return
+      event.preventDefault()
+      const world = screenToWorld(event.clientX, event.clientY, canvasRef.current.getBoundingClientRect(), viewRef.current)
+      onTraceResize(resizeTraceFromCorner(drag.image, drag.corner,
+        world.x - drag.startX, world.y - drag.startY, (drag.image.keepProportions ?? true) || event.shiftKey))
+    }
+
+    const endTraceResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (traceResizeRef.current?.pointerId !== event.pointerId) return
+      traceResizeRef.current = null
+      onStrokeEnd()
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    const traceSize = traceImage ? getTraceImageSize(traceImage) : null
+    const traceCorners: Array<{ corner: TraceCorner; label: string }> = [
+      { corner: 'nw', label: 'superior izquierda' }, { corner: 'ne', label: 'superior derecha' },
+      { corner: 'sw', label: 'inferior izquierda' }, { corner: 'se', label: 'inferior derecha' },
+    ]
+
     return (
       <div ref={containerRef} className="canvas-shell" onWheel={handleWheel}>
         <canvas
@@ -968,6 +1062,53 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           onPointerCancel={endInteraction}
         />
         <canvas ref={guideFlowCanvasRef} aria-hidden="true" className="guide-flow-canvas" />
+        {!isSewingMode && traceImage?.visible && traceSize && traceCorners.map(({ corner, label }) => (
+          <button key={corner} type="button" className={`trace-resize-handle corner-${corner}`}
+            style={{
+              left: view.offsetX + (traceImage.x + (corner.endsWith('e') ? traceSize.width : 0)) * view.scale,
+              top: view.offsetY + (traceImage.y + (corner.startsWith('s') ? traceSize.height : 0)) * view.scale,
+            }}
+            aria-label={`Cambiar tamaño del calcado desde la esquina ${label}`}
+            title={`Arrastra la esquina ${label} para ajustar el calcado`}
+            onPointerDown={(event) => startTraceResize(event, corner)} onPointerMove={moveTraceResize}
+            onPointerUp={endTraceResize} onPointerCancel={endTraceResize} onLostPointerCapture={endTraceResize}
+            onKeyDown={(event) => {
+              const directions: Record<string, [number, number]> = {
+                ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+              }
+              const delta = directions[event.key]
+              if (!delta) return
+              event.preventDefault()
+              const step = event.shiftKey ? 10 : 1
+              onStrokeStart()
+              onTraceResize(resizeTraceFromCorner(traceImage, corner, delta[0] * step, delta[1] * step))
+              onStrokeEnd()
+            }} />
+        ))}
+        {!isSewingMode && (['column', 'row'] as const).filter((axis) =>
+          mirrorMode === 'both' || (axis === 'column' ? mirrorMode === 'vertical' : mirrorMode === 'horizontal')
+        ).map((axis) => <button key={axis} type="button"
+          className={`symmetry-axis-handle ${axis === 'column' ? 'is-vertical' : 'is-horizontal'}`}
+          style={axis === 'column' ? {
+            left: view.offsetX + (PATTERN_PADDING + symmetryAxes.column * GRID_STEP) * view.scale, top: 24,
+          } : {
+            left: 24, top: view.offsetY + (PATTERN_PADDING + symmetryAxes.row * GRID_STEP) * view.scale,
+          }}
+          aria-label={`Mover eje ${axis === 'column' ? 'vertical' : 'horizontal'} de simetría`}
+          title={`Arrastra para mover el eje ${axis === 'column' ? 'vertical' : 'horizontal'} de simetría`}
+          onPointerDown={(event) => startAxisDrag(event, axis)} onPointerMove={moveAxis}
+          onPointerUp={endAxisDrag} onPointerCancel={endAxisDrag} onLostPointerCapture={endAxisDrag}
+          onKeyDown={(event) => {
+            const decrease = axis === 'column' ? 'ArrowLeft' : 'ArrowUp'
+            const increase = axis === 'column' ? 'ArrowRight' : 'ArrowDown'
+            if (event.key !== decrease && event.key !== increase) return
+            event.preventDefault()
+            onStrokeStart()
+            onSymmetryAxesChange({ ...symmetryAxes, [axis]: symmetryAxes[axis] + (event.key === decrease ? -1 : 1) })
+            onStrokeEnd()
+          }}>
+          {axis === 'column' ? '↔' : '↕'}
+        </button>)}
         {isSewingMode && showGuideSteps && (document.guideSteps ?? []).map((step, index) => {
           const key = `${step.row}:${step.column}`
           const isCompleted = completedGuideStepKeys.has(key)
