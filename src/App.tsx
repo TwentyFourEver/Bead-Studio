@@ -17,6 +17,7 @@ import { exportPatternGif, exportPatternPng } from './lib/exportPattern'
 import {
   DEFAULT_IMAGE_ANALYSIS_OPTIONS,
   gridToSourcePoint,
+  mapCellsToPalette,
   type ImageAnalysisOptions,
   type PatternAnalysisResult,
   type RGB,
@@ -35,7 +36,7 @@ import {
   type EditorSnapshot,
 } from './lib/cellHistory'
 import { generateAutomaticGuide } from './lib/guideNumbering'
-import { loadCustomColors, mergeCustomColors, saveCustomColors } from './lib/customPalette'
+import { loadCustomColors, normalizeCustomColors, PALETTE_SLOT_COUNT, replacePaletteSlot, saveCustomColors } from './lib/customPalette'
 import { extractReferenceColors, findAdjacentEmptyBeads } from './lib/designSuggestions'
 import { downloadProjectFile, parseProjectFile } from './lib/projectFile'
 import {
@@ -97,6 +98,7 @@ interface ImageImportSession {
   toleranceSelection: 'automatic' | 'manual'
   result: PatternAnalysisResult | null
   overrides: Record<string, string | null>
+  selectedPaletteSlots: number[]
   gridSignature: string | null
   analyzing: boolean
   error: string | null
@@ -220,10 +222,11 @@ function App() {
   )
   const [projectName, setProjectName] = useState('')
   const [tool, setTool] = useState<ToolMode>('paint')
-  const [color, setColor] = useState('#14b8a6')
-  const [customColors, setCustomColors] = useState(() =>
-    mergeCustomColors(loadCustomColors(), Object.values(document.cells)),
+  const [customColors, setCustomColors] = useState(loadCustomColors)
+  const [activePaletteSlot, setActivePaletteSlot] = useState(() =>
+    Math.max(0, customColors.indexOf('#14b8a6')),
   )
+  const color = customColors[activePaletteSlot]
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none')
   const [draftRows, setDraftRows] = useState(() => gridDimensionToBeadCount(document.rows))
   const [draftColumns, setDraftColumns] = useState(() =>
@@ -267,13 +270,6 @@ function App() {
   const guideStepCount = document.guideSteps?.length ?? 0
   const completedGuideStepCount = completedGuideStepKeys.size
   const paintedBeadCount = Object.keys(document.cells).length
-  const documentPaletteColors = useMemo(
-    () => paletteFromCells(document.cells).map(({ color: paletteColor }) => paletteColor),
-    [document.cells],
-  )
-  useEffect(() => {
-    setCustomColors((current) => mergeCustomColors(current, documentPaletteColors))
-  }, [documentPaletteColors])
   useEffect(() => {
     try { saveCustomColors(customColors) } catch { /* Keep the palette in memory if storage is full. */ }
   }, [customColors])
@@ -591,11 +587,14 @@ function App() {
   const effectiveImportResult = useMemo(() => {
     const result = imageImport?.result
     if (!result) return null
-    const cells = { ...result.cells }
+    const sourceCells = { ...result.cells }
     for (const [key, override] of Object.entries(imageImport.overrides)) {
-      if (override === null) delete cells[key]
-      else cells[key] = override
+      if (override === null) delete sourceCells[key]
+      else sourceCells[key] = override
     }
+    const cells = mapCellsToPalette(sourceCells,
+      imageImport.selectedPaletteSlots.map((index) => customColors[index]),
+    )
     const palette = paletteFromCells(cells).map(({ color: paletteColor, count }) => ({
       color: paletteColor,
       rgb: hexToRgb(paletteColor),
@@ -609,10 +608,13 @@ function App() {
       ...result,
       cells,
       palette,
-      beads: result.beads.filter((bead) => cells[`${bead.row}:${bead.column}`]),
+      beads: result.beads.filter((bead) => cells[`${bead.row}:${bead.column}`]).map((bead) => {
+        const mappedColor = cells[`${bead.row}:${bead.column}`]
+        return { ...bead, color: mappedColor, rgb: hexToRgb(mappedColor) }
+      }),
       canApply: result.canApply && normalized !== null,
     }
-  }, [imageImport])
+  }, [imageImport, customColors])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -653,6 +655,7 @@ function App() {
       toleranceSelection: 'automatic',
       result: null,
       overrides: {},
+      selectedPaletteSlots: Array.from({ length: PALETTE_SLOT_COUNT }, (_, index) => index),
       gridSignature: null,
       analyzing: true,
       error: null,
@@ -814,7 +817,7 @@ function App() {
 
   const confirmImageImport = useCallback(() => {
     const prepared = imageImport?.prepared
-    if (!prepared || !effectiveImportResult?.canApply) return
+    if (!prepared || imageImport.analyzing || !effectiveImportResult?.canApply) return
     const normalized = normalizeImportedCells(effectiveImportResult.cells, {
       rows: effectiveImportResult.rows,
       columns: effectiveImportResult.columns,
@@ -862,7 +865,7 @@ function App() {
       document,
       editor: {
         color,
-        customColors: mergeCustomColors(customColors, [color, ...documentPaletteColors]),
+        customColors,
         mirrorMode,
         referenceMode,
         traceImage,
@@ -895,10 +898,10 @@ function App() {
       setProjectName(project.name)
       setDraftRows(gridDimensionToBeadCount(openedDocument.rows))
       setDraftColumns(gridDimensionToBeadCount(openedDocument.columns))
-      setColor(project.editor.color)
-      setCustomColors((current) => mergeCustomColors(current, [
-        ...(project.editor.customColors ?? []), project.editor.color, ...Object.values(openedDocument.cells),
-      ]))
+      const openedColors = normalizeCustomColors(project.editor.customColors ?? [project.editor.color])
+      const openedActiveSlot = openedColors.indexOf(project.editor.color.toLowerCase())
+      setCustomColors(openedActiveSlot >= 0 ? openedColors : replacePaletteSlot(openedColors, 0, project.editor.color))
+      setActivePaletteSlot(Math.max(0, openedActiveSlot))
       setMirrorMode(project.editor.mirrorMode)
       setReferenceMode(project.editor.traceImage ? project.editor.referenceMode : 'floating')
       setTraceImage(project.editor.traceImage)
@@ -922,7 +925,6 @@ function App() {
 
   const handlePaint = useCallback(
     (positions: Array<[number, number]>, paintColor: string | null) => {
-      if (paintColor) setCustomColors((current) => mergeCustomColors(current, [paintColor]))
       const next = paintCells(documentRef.current, positions, paintColor)
       documentRef.current = next
       setDocument(next)
@@ -1108,7 +1110,6 @@ function App() {
     if (!Object.keys(document.cells).length && !guideStepCount && !projectName.trim()) return
     if (!window.confirm('¿Quieres iniciar un diseño nuevo y borrar el contenido actual?')) return
     rememberEditorChange(getEditorSnapshot())
-    setCustomColors((current) => mergeCustomColors(current, Object.values(documentRef.current.cells)))
     setDocument((current) => {
       const next = { ...current, cells: {}, guideSteps: [] }
       documentRef.current = next
@@ -1387,12 +1388,16 @@ function App() {
           tool={tool}
           onToolChange={setTool}
           color={color}
-          presetColors={mergeCustomColors(customColors, documentPaletteColors)}
+          paletteColors={customColors}
+          activePaletteSlot={activePaletteSlot}
+          onPaletteSlotChange={(index) => {
+            setActivePaletteSlot(index)
+            setTool((current) => current === 'fill' ? 'fill' : 'paint')
+          }}
           referenceColors={referenceColors}
           referenceColorsStatus={referenceColorsStatus}
           onColorChange={(nextColor) => {
-            setColor(nextColor)
-            setCustomColors((current) => mergeCustomColors(current, [nextColor]))
+            setCustomColors((current) => replacePaletteSlot(current, activePaletteSlot, nextColor))
             setTool((current) => current === 'fill' ? 'fill' : 'paint')
           }}
           guideStepCount={guideStepCount}
@@ -1612,6 +1617,7 @@ function App() {
                 image={traceImage}
                 onHide={() => updateTraceImage({ visible: false })}
                 onUseAsTrace={() => changeReferenceMode('trace')}
+                onToggleStretch={() => updateTraceImage({ keepProportions: !(traceImage.keepProportions ?? true) })}
               />
             )}
             {isSewingMode && (
@@ -1693,6 +1699,14 @@ function App() {
           imageImport?.analyzing && imageImport.analysisJob.autoBackgroundTolerance
         )}
         colorMergeDelta={imageImport?.options.colorMergeDeltaE ?? 8}
+        paletteColors={customColors}
+        selectedPaletteSlots={imageImport?.selectedPaletteSlots ?? []}
+        onPaletteSelectionChange={(selectedPaletteSlots) => setImageImport((current) =>
+          current ? { ...current, selectedPaletteSlots } : current,
+        )}
+        onPaletteColorChange={(index, nextColor) => setCustomColors((current) =>
+          replacePaletteSlot(current, index, nextColor),
+        )}
         onBackgroundModeChange={handleImportBackgroundMode}
         onBackgroundToleranceChange={handleImportBackgroundTolerance}
         onAutoBackgroundTolerance={autoAdjustImportBackgroundTolerance}

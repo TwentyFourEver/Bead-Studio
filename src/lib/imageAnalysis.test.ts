@@ -4,11 +4,37 @@ import {
   analyzePatternImage,
   analyzePatternImageWithAutomaticTolerance,
   gridToSourcePoint,
+  mapCellsToPalette,
   sampleGridCellColor,
   type PixelImage,
   type RGB,
 } from './imageAnalysis'
 import { normalizeImportedCells } from './imageImportState'
+
+describe('colores elegidos para la conversión', () => {
+  it('reduce muchos tonos a los colores exactos elegidos sin alterar posiciones ni el original', () => {
+    const cells = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [
+      `${index * 2}:0`,
+      index % 2 === 0 ? `#f0${index.toString(16).padStart(2, '0')}02` : `#02${index.toString(16).padStart(2, '0')}f0`,
+    ]))
+    const original = { ...cells }
+    const mapped = mapCellsToPalette(cells, ['#FF0000', '#0000FF'])
+    expect(Object.keys(mapped)).toEqual(Object.keys(cells))
+    expect(new Set(Object.values(mapped))).toEqual(new Set(['#ff0000', '#0000ff']))
+    expect(mapped['0:0']).toBe('#ff0000')
+    expect(mapped['2:0']).toBe('#0000ff')
+    expect(cells).toEqual(original)
+  })
+
+  it('incluye correcciones manuales y permite cambiar la selección sin perder el color original', () => {
+    const cells = { '0:0': '#fe0101', '2:0': '#0101fe', '-2:0': '#eeeeee' }
+    expect(Object.values(mapCellsToPalette(cells, ['#222222']))).toEqual(['#222222', '#222222', '#222222'])
+    expect(mapCellsToPalette(cells, [])).toEqual({})
+    expect(mapCellsToPalette(cells, ['#ff0000', '#0000ff', '#ffffff'])).toEqual({
+      '0:0': '#ff0000', '2:0': '#0000ff', '-2:0': '#ffffff',
+    })
+  })
+})
 
 function createImage(width: number, height: number, background: RGB, alpha = 255): PixelImage {
   const data = new Uint8ClampedArray(width * height * 4)

@@ -32,6 +32,11 @@ export function ReferenceControls({ traceImage: image, referenceMode, tool, onTo
             <strong>Calcado</strong><small>Sobre las cuentas</small>
           </button>
         </div>
+        <label className="suggestion-toggle">
+          <input type="checkbox" checked={image.keepProportions ?? true}
+            onChange={(event) => onTraceChange({ keepProportions: event.target.checked })} />
+          Mantener proporciones
+        </label>
         {referenceMode === 'trace' ? <>
           <button type="button" className={`trace-move-button ${tool === 'trace' ? 'is-active' : ''}`}
             aria-pressed={tool === 'trace'} onClick={() => {
@@ -50,13 +55,24 @@ export function ReferenceControls({ traceImage: image, referenceMode, tool, onTo
               onChange={(event) => onTraceChange({ scalePercent: Number(event.target.value) })} />
             <output>{Math.round(image.scalePercent)}%</output>
           </label>
-          <label className="suggestion-toggle">
-            <input type="checkbox" checked={image.keepProportions ?? true}
-              onChange={(event) => onTraceChange({ keepProportions: event.target.checked })} />
-            Mantener proporciones
-          </label>
-          <p className="helper-text">Arrastra una esquina de la imagen en el lienzo para cambiar su tamaño.
-            Desactiva Mantener proporciones para ajustar ancho y alto por separado.</p>
+          <div className="trace-position-grid">
+            {(['widthFactor', 'heightFactor'] as const).map((axis) => <label key={axis}>
+              <span>{axis === 'widthFactor' ? 'Estirar ancho (%)' : 'Estirar alto (%)'}</span>
+              <input type="number" min="10" max="1000" step="5"
+                value={Math.round((image[axis] ?? 1) * 100)}
+                onChange={(event) => {
+                  const percent = event.target.valueAsNumber
+                  if (Number.isFinite(percent) && percent >= 10 && percent <= 1000) {
+                    onTraceChange({ [axis]: percent / 100, keepProportions: false })
+                  }
+                }} />
+            </label>)}
+          </div>
+          <p className="helper-text">Arrastra los puntos de los lados para estirar solo el ancho o el alto. Las esquinas ajustan el tamaño completo.</p>
+          <button type="button" className="secondary-button" onClick={() =>
+            onTraceChange({ widthFactor: 1, heightFactor: 1, keepProportions: true })}>
+            Restablecer proporciones
+          </button>
           <output className="trace-size-output" aria-label="Dimensiones del calcado">
             {Math.round(getTraceImageSize(image).width)} × {Math.round(getTraceImageSize(image).height)}
           </output>
@@ -68,7 +84,7 @@ export function ReferenceControls({ traceImage: image, referenceMode, tool, onTo
               }} />
             </label>)}
           </div>
-        </> : <p className="helper-text">Arrastra el encabezado de la imagen para moverla. Cambia su tamaño desde la esquina inferior derecha.</p>}
+        </> : <p className="helper-text">Arrastra el encabezado para mover la imagen. Pulsa Estirar y arrastra la esquina inferior derecha para ajustar ancho y alto libremente.</p>}
       </>}
       <div className="trace-actions">
         <label className="secondary-button trace-replace-button">

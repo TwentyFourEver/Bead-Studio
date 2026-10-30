@@ -29,7 +29,7 @@ import {
   getGuideRouteAnimation,
 } from '../lib/exportPattern'
 import { collectGuidePointsAlongSegment } from '../lib/guideDrag'
-import { resizeTraceFromCorner, type TraceCorner } from '../lib/traceResize'
+import { resizeTraceFromHandle, type TraceResizeHandle } from '../lib/traceResize'
 import {
   getTraceImageSize,
   type MirrorMode,
@@ -173,7 +173,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     const interactionRef = useRef<PointerInteraction | null>(null)
     const axisDragRef = useRef<{ axis: 'row' | 'column'; pointerId: number; offset: number } | null>(null)
     const traceResizeRef = useRef<{
-      pointerId: number; corner: TraceCorner; image: TraceImage; startX: number; startY: number
+      pointerId: number; handle: TraceResizeHandle; image: TraceImage; startX: number; startY: number
     } | null>(null)
     const viewRef = useRef<ViewTransform>(INITIAL_VIEW)
     const [view, setView] = useState<ViewTransform>(INITIAL_VIEW)
@@ -1017,11 +1017,11 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     }
 
-    const startTraceResize = (event: ReactPointerEvent<HTMLButtonElement>, corner: TraceCorner) => {
+    const startTraceResize = (event: ReactPointerEvent<HTMLButtonElement>, handle: TraceResizeHandle) => {
       if (event.button !== 0 || !traceImage || !canvasRef.current) return
       event.preventDefault()
       const world = screenToWorld(event.clientX, event.clientY, canvasRef.current.getBoundingClientRect(), viewRef.current)
-      traceResizeRef.current = { pointerId: event.pointerId, corner, image: traceImage, startX: world.x, startY: world.y }
+      traceResizeRef.current = { pointerId: event.pointerId, handle, image: traceImage, startX: world.x, startY: world.y }
       event.currentTarget.setPointerCapture(event.pointerId)
       onStrokeStart()
     }
@@ -1031,7 +1031,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       if (!drag || drag.pointerId !== event.pointerId || !canvasRef.current) return
       event.preventDefault()
       const world = screenToWorld(event.clientX, event.clientY, canvasRef.current.getBoundingClientRect(), viewRef.current)
-      onTraceResize(resizeTraceFromCorner(drag.image, drag.corner,
+      onTraceResize(resizeTraceFromHandle(drag.image, drag.handle,
         world.x - drag.startX, world.y - drag.startY, (drag.image.keepProportions ?? true) || event.shiftKey))
     }
 
@@ -1043,9 +1043,11 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     }
 
     const traceSize = traceImage ? getTraceImageSize(traceImage) : null
-    const traceCorners: Array<{ corner: TraceCorner; label: string }> = [
-      { corner: 'nw', label: 'superior izquierda' }, { corner: 'ne', label: 'superior derecha' },
-      { corner: 'sw', label: 'inferior izquierda' }, { corner: 'se', label: 'inferior derecha' },
+    const traceHandles: Array<{ handle: TraceResizeHandle; label: string }> = [
+      { handle: 'nw', label: 'la esquina superior izquierda' }, { handle: 'ne', label: 'la esquina superior derecha' },
+      { handle: 'sw', label: 'la esquina inferior izquierda' }, { handle: 'se', label: 'la esquina inferior derecha' },
+      { handle: 'w', label: 'el lado izquierdo' }, { handle: 'e', label: 'el lado derecho' },
+      { handle: 'n', label: 'el lado superior' }, { handle: 's', label: 'el lado inferior' },
     ]
 
     return (
@@ -1062,15 +1064,15 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           onPointerCancel={endInteraction}
         />
         <canvas ref={guideFlowCanvasRef} aria-hidden="true" className="guide-flow-canvas" />
-        {!isSewingMode && traceImage?.visible && traceSize && traceCorners.map(({ corner, label }) => (
-          <button key={corner} type="button" className={`trace-resize-handle corner-${corner}`}
+        {!isSewingMode && traceImage?.visible && traceSize && traceHandles.map(({ handle, label }) => (
+          <button key={handle} type="button" className={`trace-resize-handle handle-${handle}`}
             style={{
-              left: view.offsetX + (traceImage.x + (corner.endsWith('e') ? traceSize.width : 0)) * view.scale,
-              top: view.offsetY + (traceImage.y + (corner.startsWith('s') ? traceSize.height : 0)) * view.scale,
+              left: view.offsetX + (traceImage.x + (handle.includes('e') ? traceSize.width : handle.includes('w') ? 0 : traceSize.width / 2)) * view.scale,
+              top: view.offsetY + (traceImage.y + (handle.includes('s') ? traceSize.height : handle.includes('n') ? 0 : traceSize.height / 2)) * view.scale,
             }}
-            aria-label={`Cambiar tamaño del calcado desde la esquina ${label}`}
-            title={`Arrastra la esquina ${label} para ajustar el calcado`}
-            onPointerDown={(event) => startTraceResize(event, corner)} onPointerMove={moveTraceResize}
+            aria-label={`Cambiar tamaño del calcado desde ${label}`}
+            title={`Arrastra ${label} para ${handle.length === 1 ? 'estirar la imagen' : 'ajustar el calcado'}`}
+            onPointerDown={(event) => startTraceResize(event, handle)} onPointerMove={moveTraceResize}
             onPointerUp={endTraceResize} onPointerCancel={endTraceResize} onLostPointerCapture={endTraceResize}
             onKeyDown={(event) => {
               const directions: Record<string, [number, number]> = {
@@ -1081,7 +1083,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
               event.preventDefault()
               const step = event.shiftKey ? 10 : 1
               onStrokeStart()
-              onTraceResize(resizeTraceFromCorner(traceImage, corner, delta[0] * step, delta[1] * step))
+              onTraceResize(resizeTraceFromHandle(traceImage, handle, delta[0] * step, delta[1] * step))
               onStrokeEnd()
             }} />
         ))}

@@ -31,6 +31,10 @@ interface ImageImportDialogProps {
   backgroundToleranceSelection: 'automatic' | 'manual'
   autoBackgroundToleranceActive: boolean
   colorMergeDelta: number
+  paletteColors: string[]
+  selectedPaletteSlots: number[]
+  onPaletteSelectionChange: (slots: number[]) => void
+  onPaletteColorChange: (index: number, color: string) => void
   onBackgroundModeChange: (mode: 'auto' | 'manual') => void
   onBackgroundToleranceChange: (value: number) => void
   onAutoBackgroundTolerance: () => void
@@ -424,6 +428,10 @@ export function ImageImportDialog({
   backgroundToleranceSelection,
   autoBackgroundToleranceActive,
   colorMergeDelta,
+  paletteColors,
+  selectedPaletteSlots,
+  onPaletteSelectionChange,
+  onPaletteColorChange,
   onBackgroundModeChange,
   onBackgroundToleranceChange,
   onAutoBackgroundTolerance,
@@ -1355,21 +1363,50 @@ export function ImageImportDialog({
 
             <section className="image-import-panel-section">
               <div className="image-import-section-heading">
-                <h3>Agrupar colores</h3>
+                <h3>Colores que quiero usar</h3>
+                <span className="image-import-card-badge">{selectedPaletteSlots.length} de 12</span>
               </div>
-              <label className="image-import-range-control">
-                <span><span>Diferencia ΔE</span><output>{colorMergeDelta}</output></span>
-                <input
-                  type="range"
-                  min="0"
-                  max="24"
-                  step="1"
-                  value={colorMergeDelta}
-                  onChange={(event) => onColorMergeDeltaChange(Number(event.target.value))}
-                />
-                <small>Un valor mayor combina tonos más parecidos.</small>
-              </label>
-              <ul className="image-import-palette" aria-label={`${palette.length} colores detectados`}>
+              <p className="helper-text">Marca los colores permitidos. Las cuentas se adaptarán al más cercano, sin crear tonos nuevos. Editar cambia el color de ese espacio.</p>
+              <div className="palette import-color-slots" role="group" aria-label="Elegir colores de conversión">
+                {paletteColors.map((paletteColor, index) => {
+                  const selected = selectedPaletteSlots.includes(index)
+                  return <div className="import-color-slot" key={index}>
+                    <button type="button" className={`swatch ${selected ? 'is-selected' : 'is-excluded'}`}
+                      style={{ backgroundColor: paletteColor }}
+                      aria-label={`Usar espacio ${index + 1} en la conversión: ${paletteColor}`}
+                      aria-pressed={selected}
+                      onClick={() => onPaletteSelectionChange(selected
+                        ? selectedPaletteSlots.filter((slot) => slot !== index)
+                        : [...selectedPaletteSlots, index])}>
+                      {selected && <span className="swatch-check" aria-hidden="true" />}
+                    </button>
+                    <label className="import-color-edit">Editar {index + 1}
+                      <input type="color" value={paletteColor}
+                        aria-label={`Editar color ${index + 1} de conversión`}
+                        onInput={(event) => onPaletteColorChange(index, event.currentTarget.value)}
+                        onChange={(event) => onPaletteColorChange(index, event.target.value)} />
+                    </label>
+                  </div>
+                })}
+              </div>
+              <div className="import-palette-actions">
+                <button type="button" className="image-import-auto-button" onClick={() =>
+                  onPaletteSelectionChange(paletteColors.map((_, index) => index))}>Usar todos</button>
+                <button type="button" className="image-import-auto-button" onClick={() =>
+                  onPaletteSelectionChange([])}>Quitar todos</button>
+              </div>
+              {selectedPaletteSlots.length === 0 && <p className="import-palette-empty" role="status">Elige al menos un color para convertir la imagen.</p>}
+              <details className="import-color-adjustments">
+                <summary>Ajuste de tonos similares</summary>
+                <label className="image-import-range-control">
+                  <span><span>Agrupar tonos</span><output>{colorMergeDelta}</output></span>
+                  <input type="range" min="0" max="24" step="1" value={colorMergeDelta}
+                    aria-label="Agrupar tonos similares"
+                    onChange={(event) => onColorMergeDeltaChange(Number(event.target.value))} />
+                  <small>Un valor mayor combina tonos parecidos antes de aplicar tus colores.</small>
+                </label>
+              </details>
+              <ul className="image-import-palette" aria-label={`${palette.length} colores usados`}>
                 {palette.map((entry, index) => (
                   <li key={`${entry.color}-${index}`} title={`${entry.color}: ${entry.count} cuentas`}>
                     <span style={{ backgroundColor: entry.color }} aria-hidden="true" />
@@ -1395,7 +1432,9 @@ export function ImageImportDialog({
 
         <footer className="image-import-footer">
           <p>
-            {analysis.canApply
+            {selectedPaletteSlots.length === 0
+              ? 'Elige al menos un color para continuar.'
+              : analysis.canApply
               ? 'Al aplicar, este patrón sustituirá el contenido actual en una sola acción.'
               : 'Ajusta el fondo o el diseño hasta obtener una retícula fiable.'}
           </p>

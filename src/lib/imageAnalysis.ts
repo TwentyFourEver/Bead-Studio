@@ -203,6 +203,34 @@ function deltaE(left: Lab, right: Lab) {
   return Math.hypot(left.l - right.l, left.a - right.a, left.b - right.b)
 }
 
+/** Map every bead to an exact user-selected color, keeping positions and source data intact. */
+export function mapCellsToPalette(cells: Record<string, string>, colors: string[]) {
+  const palette = [...new Set(colors.map((color) => color.toLowerCase()))]
+    .filter((color) => /^#[0-9a-f]{6}$/.test(color))
+    .map((color) => ({ color, lab: rgbToLab({
+      r: Number.parseInt(color.slice(1, 3), 16),
+      g: Number.parseInt(color.slice(3, 5), 16),
+      b: Number.parseInt(color.slice(5, 7), 16),
+    }) }))
+  if (!palette.length) return {}
+  const assignments = new Map<string, string>()
+  return Object.fromEntries(Object.entries(cells).map(([key, sourceColor]) => {
+    let chosen = assignments.get(sourceColor)
+    if (!chosen) {
+      const lab = rgbToLab({
+        r: Number.parseInt(sourceColor.slice(1, 3), 16),
+        g: Number.parseInt(sourceColor.slice(3, 5), 16),
+        b: Number.parseInt(sourceColor.slice(5, 7), 16),
+      })
+      chosen = palette.reduce((nearest, candidate) =>
+        deltaE(lab, candidate.lab) < deltaE(lab, nearest.lab) ? candidate : nearest,
+      ).color
+      assignments.set(sourceColor, chosen)
+    }
+    return [key, chosen]
+  }))
+}
+
 function normalizedOptions(options?: Partial<ImageAnalysisOptions>): ImageAnalysisOptions {
   const backgroundColor = options?.backgroundColor
     ? {

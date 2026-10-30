@@ -1,18 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { GuideStartDirection, NumberingMode, ToolMode } from '../types'
-
-const PALETTE = [
-  '#111827',
-  '#ef4444',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#14b8a6',
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-  '#f8fafc',
-]
 
 export type InterfaceIconName =
   | 'brush'
@@ -62,7 +49,9 @@ interface ToolbarProps {
   tool: ToolMode
   onToolChange: (tool: ToolMode) => void
   color: string
-  presetColors: string[]
+  paletteColors: string[]
+  activePaletteSlot: number
+  onPaletteSlotChange: (index: number) => void
   referenceColors: string[]
   referenceColorsStatus: 'idle' | 'loading' | 'ready' | 'error'
   children?: ReactNode
@@ -213,7 +202,9 @@ export function Toolbar({
   tool,
   onToolChange,
   color,
-  presetColors,
+  paletteColors,
+  activePaletteSlot,
+  onPaletteSlotChange,
   referenceColors,
   referenceColorsStatus,
   children,
@@ -229,11 +220,6 @@ export function Toolbar({
   onClearGuide,
   isInactive = false,
 }: ToolbarProps) {
-  const [showAllColors, setShowAllColors] = useState(false)
-  const paletteColors = [...new Set([...presetColors, ...PALETTE].map((item) => item.toLowerCase()))]
-  const visiblePaletteColors = showAllColors ? paletteColors : paletteColors.slice(0, 10)
-  const hasHiddenColors = paletteColors.length > 10
-
   return (
     <aside
       id="workspace-tool-panel"
@@ -244,7 +230,9 @@ export function Toolbar({
     >
         <div className="tool-panel-scroll">
           <section className="panel-section first-section">
-            <SectionTitle>Color activo</SectionTitle>
+            <div className="title-with-count">
+              <SectionTitle>Mis colores</SectionTitle><span>12 espacios</span>
+            </div>
             <label className="color-input-row">
               <span className="active-color" style={{ backgroundColor: color }} />
               <span className="color-value">{color.toUpperCase()}</span>
@@ -252,22 +240,24 @@ export function Toolbar({
               <input
                 type="color"
                 value={color}
+                onInput={(event) => onColorChange(event.currentTarget.value)}
                 onChange={(event) => onColorChange(event.target.value)}
-                aria-label="Elegir color"
+                aria-label={`Editar color del espacio ${activePaletteSlot + 1}`}
               />
             </label>
-            <div className="palette" aria-label="Paleta de colores">
-              {visiblePaletteColors.map((paletteColor) => (
+            <div className="palette" aria-label="Mis 12 colores">
+              {paletteColors.map((paletteColor, index) => (
                 <button
                   type="button"
-                  key={paletteColor}
-                  className={`swatch ${color === paletteColor ? 'is-selected' : ''}`}
+                  key={index}
+                  className={`swatch ${activePaletteSlot === index ? 'is-selected' : ''}`}
                   style={{ backgroundColor: paletteColor }}
-                  onClick={() => onColorChange(paletteColor)}
-                  aria-label={`Usar color ${paletteColor}`}
-                  aria-pressed={color === paletteColor}
+                  onClick={() => onPaletteSlotChange(index)}
+                  title={`Espacio ${index + 1}: ${paletteColor.toUpperCase()}`}
+                  aria-label={`Espacio ${index + 1}: usar color ${paletteColor}`}
+                  aria-pressed={activePaletteSlot === index}
                 >
-                  {color === paletteColor && <span className="swatch-check" aria-hidden="true" />}
+                  {activePaletteSlot === index && <span className="swatch-check" aria-hidden="true" />}
                 </button>
               ))}
             </div>
@@ -276,33 +266,15 @@ export function Toolbar({
                 Haz clic sobre una cuenta para reemplazar todas las cuentas de ese color.
               </p>
             )}
-            {hasHiddenColors && (
-              <button
-                type="button"
-                className="palette-toggle"
-                onClick={() => setShowAllColors((current) => !current)}
-                aria-expanded={showAllColors}
-              >
-                <span>
-                  {showAllColors
-                    ? 'Ocultar colores adicionales'
-                    : `Mostrar ${paletteColors.length - 10} ${paletteColors.length - 10 === 1 ? 'color más' : 'colores más'}`}
-                </span>
-                <InterfaceIcon
-                  name="chevron-down"
-                  className={`menu-chevron ${showAllColors ? 'is-open' : ''}`}
-                />
-              </button>
-            )}
-            <p className="helper-text saved-palette-note">Los colores elegidos se conservan al limpiar el diseño.</p>
+            <p className="helper-text saved-palette-note">Elige un espacio y pulsa Editar para cambiar su color. Tus 12 colores se conservan al limpiar el diseño.</p>
           </section>
 
-          {referenceColorsStatus !== 'idle' && <section className="panel-section">
-            <SectionTitle>Colores de la referencia</SectionTitle>
+          {referenceColorsStatus !== 'idle' && <details className="panel-section reference-palette-details">
+            <summary>Tomar un color de la imagen</summary>
             <p className="helper-text">
               {referenceColorsStatus === 'loading' ? 'Buscando colores…' : referenceColorsStatus === 'error'
                 ? 'No fue posible obtener los colores de esta imagen.' : referenceColors.length
-                  ? 'Colores recomendados. Haz clic para pintar.' : 'La imagen no contiene colores visibles.'}
+                  ? `Haz clic para cambiar el color del espacio ${activePaletteSlot + 1}.` : 'La imagen no contiene colores visibles.'}
             </p>
             <div className="palette" aria-label="Colores recomendados de la referencia">
               {referenceColors.map((item) => <button type="button" key={item}
@@ -313,7 +285,7 @@ export function Toolbar({
                 {color.toLowerCase() === item && <span className="swatch-check" aria-hidden="true" />}
               </button>)}
             </div>
-          </section>}
+          </details>}
 
           {children}
 
