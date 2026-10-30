@@ -23,6 +23,8 @@ La compilación de producción se genera en `dist/`.
 
 ## Controles
 
+- Tablet: controles táctiles amplios, paleta de 12 colores y panel de ajustes que se puede ocultar con **Ocultar ajustes** y recuperar con **Colores y ajustes**. Usa un dedo para dibujar y dos dedos para mover y ampliar el lienzo. Al girar la pantalla o abrir el panel, el patrón ajustado sigue completo; si habías ampliado un detalle, conserva el zoom y el centro. Los paneles y las opciones de conversión permiten desplazarse para llegar a todos los controles. En la conversión, usa **Mover vista** para desplazar el resultado con un dedo y **Volver a dibujar** para corregir las cuentas.
+
 - Pincel: clic o arrastre sobre una bolita; atajo `B`.
 - Borrador: clic o arrastre; atajo `E`.
 - Selección: clic sobre una bolita pintada o arrastre un marco; atajo `V`. Usa `Mayús` para sumar al conjunto, arrastra para mover, `Supr` para borrar y `Esc` para deseleccionar.

@@ -3863,6 +3863,71 @@ kbd {
 .trace-size-output { color: var(--ui-text-secondary); font-size: 11px; }
 .saved-palette-note { margin-top: 10px; }
 
+.tablet-panel-toggle { display: none; }
+
+/* Tablet controls remain reachable in both orientations and with a touch keyboard. */
+@media (max-width: 1180px) {
+  .app-shell { height: 100dvh; }
+  .canvas-topbar { flex-wrap: wrap; height: auto; flex-basis: auto; gap: 5px; padding: 6px 8px; }
+  .canvas-topbar-scroll { flex: 1 0 100%; min-height: 48px; gap: 8px; }
+  .canvas-topbar-scroll > * { flex-shrink: 0; }
+  .canvas-command-group, .topbar-tools { flex-shrink: 0; }
+  .tablet-panel-toggle { display: block; min-height: 44px; padding: 0 10px; color: var(--ui-text); background: var(--ui-control); border: 1px solid var(--ui-border); border-radius: 5px; font-size: 12px; }
+  .tablet-panel-closed .tool-panel { display: none; }
+  .zoom-controls { margin-left: auto; }
+  .panel-section { font-size: 12px; }
+  .helper-text { font-size: 12px; line-height: 1.5; }
+  .panel-title { font-size: 11px; }
+  .tool-panel-scroll { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+}
+
+@media (min-width: 761px) and (max-width: 1180px) {
+  .tool-panel { width: 276px; min-width: 276px; }
+  .panel-section { padding: 14px; }
+  .image-import-content { display: block; overflow-y: auto; }
+  .image-import-visuals { min-height: 400px; overflow: visible; }
+  .image-import-sidebar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; border-left: 0; }
+}
+
+@media (max-width: 760px) {
+  .tool-panel { height: min(340px, 42dvh); min-height: 0; flex-basis: min(340px, 42dvh); }
+  .tool-panel-scroll > .panel-section { height: 100%; overflow-y: auto; overscroll-behavior-y: contain; }
+  .palette { padding: 4px 0; }
+  .number-guide-help { max-height: none; }
+}
+
+@media (any-pointer: coarse), (max-width: 1180px) {
+  button, .secondary-button, .trace-replace-button { touch-action: manipulation; }
+  .topbar-action, .topbar-tool-button, .history-button, .zoom-controls button,
+  .header-dimensions button, .header-background button, .header-export-trigger,
+  .header-clear-button, .secondary-button, .trace-move-button, .trace-remove-button,
+  .header-clear-design, .trace-replace-button,
+  .reference-mode-grid button, .numbering-mode-switch button, .number-guide-actions button,
+  .guide-start-switch button, .generate-guide-button, .sewing-mode-entry,
+  .image-import-zoom-button, .image-import-zoom-value, .image-import-close-button,
+  .image-import-auto-button, .image-import-primary-button, .image-import-secondary-button {
+    min-width: 44px; min-height: 44px; height: auto;
+  }
+  .topbar-action, .topbar-tool-button, .history-button { width: 44px; height: 44px; }
+  .swatch { width: 44px; height: 44px; }
+  .palette { gap: 12px 8px; }
+  .color-input-row { height: 46px; }
+  input[type="number"], input[type="text"], select { min-height: 44px; font-size: 16px; }
+  input[type="range"] { min-height: 36px; }
+  input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; flex-shrink: 0; }
+  .suggestion-toggle { min-height: 44px; font-size: 12px; }
+  .trace-resize-handle { width: 30px; height: 30px; }
+  .symmetry-axis-handle { width: 44px; height: 44px; }
+  .floating-reference-header { height: 48px; }
+  .floating-reference-body { height: calc(100% - 48px); }
+  .floating-reference-header button { min-height: 40px; font-size: 10px; }
+  .floating-reference-resize-hint { width: 36px; height: 36px; }
+  .import-color-edit { min-height: 30px; display: flex; align-items: center; font-size: 12px; }
+  .image-import-canvas-help { font-size: 12px; line-height: 1.5; }
+  .image-import-canvas-help button { margin-right: 8px; }
+  .image-import-footer { flex-shrink: 0; padding-bottom: env(safe-area-inset-bottom); }
+}
+
 .swatch:focus-visible { outline: 2px solid #fff; outline-offset: 5px; }
 .reference-palette-details summary, .import-color-adjustments summary { cursor: pointer; font-size: 11px; color: var(--ui-text-secondary); }
 .reference-palette-details[open] summary { margin-bottom: 10px; }

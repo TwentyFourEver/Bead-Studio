@@ -261,6 +261,14 @@ function App() {
     useState<GuideStartDirection>('top')
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false)
   const [isFullscreenPanelOpen, setIsFullscreenPanelOpen] = useState(true)
+  const [isTabletPanelOpen, setIsTabletPanelOpen] = useState(true)
+  const [isCompactWorkspace, setIsCompactWorkspace] = useState(() => window.matchMedia('(max-width: 1180px)').matches)
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 1180px)')
+    const update = () => setIsCompactWorkspace(query.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
   const [isSewingMode, setIsSewingMode] = useState(false)
   const [completedGuideStepKeys, setCompletedGuideStepKeys] =
     useState<Set<string>>(() => new Set())
@@ -1382,6 +1390,7 @@ function App() {
           'workspace',
           isCanvasFullscreen && isFullscreenPanelOpen ? 'fullscreen-panel-open' : '',
           isSewingMode ? 'sewing-mode' : '',
+          !isTabletPanelOpen && !isCanvasFullscreen ? 'tablet-panel-closed' : '',
         ].filter(Boolean).join(' ')}
       >
         <Toolbar
@@ -1409,7 +1418,7 @@ function App() {
           showGuideSteps={showGuideSteps}
           onGuideVisibilityChange={setShowGuideSteps}
           onClearGuide={clearGuideSteps}
-          isInactive={isSewingMode || (isCanvasFullscreen && !isFullscreenPanelOpen)}
+          isInactive={isSewingMode || (isCanvasFullscreen ? !isFullscreenPanelOpen : isCompactWorkspace && !isTabletPanelOpen)}
         >
           <section ref={referencePanelRef} className="panel-section reference-panel">
             <h2 className="panel-title">Referencia</h2>
@@ -1545,9 +1554,15 @@ function App() {
               </div>
               <button type="button" className="topbar-action" onClick={() => {
                 setIsFullscreenPanelOpen(true)
+                setIsTabletPanelOpen(true)
                 window.requestAnimationFrame(() => referencePanelRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
               }} title="Abrir el apartado de referencia del panel lateral"><span aria-hidden="true">▧</span><span>Ver referencia</span></button>
             </div>
+            {!isCanvasFullscreen && !isSewingMode && <button type="button"
+              className="tablet-panel-toggle" aria-controls="workspace-tool-panel"
+              aria-expanded={isTabletPanelOpen} onClick={() => setIsTabletPanelOpen((current) => !current)}>
+              {isTabletPanelOpen ? 'Ocultar ajustes' : 'Colores y ajustes'}
+            </button>}
             <button
               type="button"
               className="sewing-mode-entry"

@@ -29,6 +29,8 @@ import {
   getGuideRouteAnimation,
 } from '../lib/exportPattern'
 import { collectGuidePointsAlongSegment } from '../lib/guideDrag'
+import { touchGesture, transformTouchGesture, type TouchPoint } from '../lib/touchGesture'
+import { resizeCanvasView } from '../lib/viewportResize'
 import { resizeTraceFromHandle, type TraceResizeHandle } from '../lib/traceResize'
 import {
   getTraceImageSize,
@@ -171,6 +173,9 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     const guideFlowCanvasRef = useRef<HTMLCanvasElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const interactionRef = useRef<PointerInteraction | null>(null)
+    const touchesRef = useRef(new Map<number, TouchPoint>())
+    const gestureRef = useRef<{ start: ReturnType<typeof touchGesture>; view: ViewTransform } | null>(null)
+    const pendingTouchPaintRef = useRef<{ x: number; y: number } | null>(null)
     const axisDragRef = useRef<{ axis: 'row' | 'column'; pointerId: number; offset: number } | null>(null)
     const traceResizeRef = useRef<{
       pointerId: number; handle: TraceResizeHandle; image: TraceImage; startX: number; startY: number
@@ -194,6 +199,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     )
     const traceSource = traceImage?.src
     const previousGridRef = useRef({ rows: 0, columns: 0 })
+    const previousViewportRef = useRef({ width: 0, height: 0 })
 
     const updateView = useCallback(
       (next: ViewTransform) => {
@@ -274,6 +280,16 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       if (!isSewingMode || !viewport.width || !viewport.height) return
       fit()
     }, [fit, isSewingMode, viewport.height, viewport.width])
+
+    useEffect(() => {
+      const previous = previousViewportRef.current
+      previousViewportRef.current = viewport
+      if (isSewingMode) return
+      if (previous.width === viewport.width && previous.height === viewport.height) return
+      const current = viewRef.current
+      const next = resizeCanvasView(current, previous, viewport, document.rows, document.columns)
+      if (next !== current) updateView(next)
+    }, [viewport, document.rows, document.columns, updateView, isSewingMode])
 
     useEffect(() => {
       if (!traceSource) return
@@ -635,6 +651,23 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
       canvas.setPointerCapture(event.pointerId)
       const rect = canvas.getBoundingClientRect()
       const world = screenToWorld(event.clientX, event.clientY, rect, viewRef.current)
+      if (event.pointerType === 'touch') {
+        touchesRef.current.set(event.pointerId, { x: event.clientX - rect.left, y: event.clientY - rect.top })
+        if (touchesRef.current.size >= 2) {
+          if (!gestureRef.current) {
+            pendingTouchPaintRef.current = null
+            if (interactionRef.current && interactionRef.current.kind !== 'pan' && interactionRef.current.kind !== 'select-box') onStrokeEnd()
+            interactionRef.current = null
+            setSelectionBox(null)
+            setSelectionDelta({ row: 0, column: 0 })
+            setIsMovingSelection(false)
+            gestureRef.current = { start: touchGesture([...touchesRef.current.values()]), view: viewRef.current }
+          }
+          setIsPanning(true)
+          return
+        }
+        if (gestureRef.current) return
+      }
       const shouldPan =
         event.button === 1 ||
         (event.button === 0 && (isSewingMode || spaceHeld || tool === 'pan'))
@@ -785,15 +818,32 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
         onStrokeStart()
       } else {
         onStrokeStart()
-        paintAtWorldPoint(world.x, world.y, interactionRef.current.visited, eraseOverride)
+        if (event.pointerType === 'touch') pendingTouchPaintRef.current = world
+        else paintAtWorldPoint(world.x, world.y, interactionRef.current.visited, eraseOverride)
       }
     }
 
     const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      if (touchesRef.current.has(event.pointerId) && canvasRef.current) {
+        const rect = canvasRef.current.getBoundingClientRect()
+        touchesRef.current.set(event.pointerId, { x: event.clientX - rect.left, y: event.clientY - rect.top })
+        const gesture = gestureRef.current
+        if (gesture) {
+          event.preventDefault()
+          if (touchesRef.current.size >= 2) updateView(transformTouchGesture(gesture.view, gesture.start, touchGesture([...touchesRef.current.values()])))
+          return
+        }
+      }
       const interaction = interactionRef.current
       const canvas = canvasRef.current
       if (!interaction || !canvas || interaction.pointerId !== event.pointerId) return
       event.preventDefault()
+      if (pendingTouchPaintRef.current && interaction.kind === 'paint') {
+        if (Math.hypot(event.clientX - interaction.lastScreenX, event.clientY - interaction.lastScreenY) < 3) return
+        const point = pendingTouchPaintRef.current
+        paintAtWorldPoint(point.x, point.y, interaction.visited, interaction.eraseOverride)
+        pendingTouchPaintRef.current = null
+      }
 
       if (interaction.kind === 'pan') {
         const current = viewRef.current
@@ -908,8 +958,22 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
     }
 
     const endInteraction = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      touchesRef.current.delete(event.pointerId)
+      if (gestureRef.current) {
+        if (touchesRef.current.size === 0) {
+          gestureRef.current = null
+          setIsPanning(false)
+        }
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+        return
+      }
       const interaction = interactionRef.current
       if (!interaction || interaction.pointerId !== event.pointerId) return
+      if (pendingTouchPaintRef.current && interaction.kind === 'paint') {
+        const point = pendingTouchPaintRef.current
+        pendingTouchPaintRef.current = null
+        if (event.type === 'pointerup') paintAtWorldPoint(point.x, point.y, interaction.visited, interaction.eraseOverride)
+      }
       if (interaction.kind === 'paint' || interaction.kind === 'trace') onStrokeEnd()
       if (interaction.kind === 'guide') {
         if (
@@ -1062,6 +1126,7 @@ export const PatternCanvas = forwardRef<PatternCanvasHandle, PatternCanvasProps>
           onPointerMove={handlePointerMove}
           onPointerUp={endInteraction}
           onPointerCancel={endInteraction}
+          onLostPointerCapture={endInteraction}
         />
         <canvas ref={guideFlowCanvasRef} aria-hidden="true" className="guide-flow-canvas" />
         {!isSewingMode && traceImage?.visible && traceSize && traceHandles.map(({ handle, label }) => (

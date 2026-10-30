@@ -469,6 +469,7 @@ export function ImageImportDialog({
   const patternDragRef = useRef<PatternDragState | null>(null)
   const patternPanDragRef = useRef<PatternPanDragState | null>(null)
   const [patternPanning, setPatternPanning] = useState(false)
+  const [patternNavigationMode, setPatternNavigationMode] = useState(false)
   const [sourceViewState, setSourceViewState] = useState<ViewState>({
     source,
     zoom: 1,
@@ -911,7 +912,7 @@ export function ImageImportDialog({
   const handlePatternPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>) => {
       if (!analysis) return
-      if (event.button === 1) {
+      if (event.button === 1 || (event.button === 0 && patternNavigationMode)) {
         patternPanDragRef.current = {
           pointerId: event.pointerId,
           lastX: event.clientX,
@@ -941,7 +942,7 @@ export function ImageImportDialog({
       applyPatternAtPoint(event.clientX, event.clientY, drag.paint, drag.visited)
       event.preventDefault()
     },
-    [analysis, analyzing, applyPatternAtPoint, cells, getPatternCellAtPoint],
+    [analysis, analyzing, applyPatternAtPoint, cells, getPatternCellAtPoint, patternNavigationMode],
   )
 
   const handlePatternPointerMove = useCallback(
@@ -1246,7 +1247,7 @@ export function ImageImportDialog({
                   onKeyDown={handlePatternKeyDown}
                   tabIndex={0}
                   role="application"
-                  aria-label={`Patrón editable de ${analysis.rows} filas por ${analysis.columns} columnas. Usa la rueda para ampliar, el botón central para mover y arrastra con el botón principal para pintar o borrar.`}
+                  aria-label={`Patrón editable de ${analysis.rows} filas por ${analysis.columns} columnas. Usa los botones para ampliar y Mover vista para desplazarte; desactívalo para pintar o borrar.`}
                   aria-describedby="image-import-pattern-help"
                 />
                 <span className="image-import-sr-only" aria-live="polite" aria-atomic="true">
@@ -1254,7 +1255,12 @@ export function ImageImportDialog({
                 </span>
               </div>
               <p id="image-import-pattern-help" className="image-import-canvas-help">
-                Rueda: zoom. Botón central: mover. Arrastra con el botón principal para pintar; empieza sobre una cuenta para borrar.
+                <button type="button" className="image-import-auto-button" aria-pressed={patternNavigationMode}
+                  onClick={() => setPatternNavigationMode((current) => !current)}>
+                  {patternNavigationMode ? 'Volver a dibujar' : 'Mover vista'}
+                </button>
+                {patternNavigationMode ? 'Arrastra con un dedo para mover el resultado.'
+                  : 'Arrastra para pintar o borrar. Usa + y − para ampliar, o la rueda del ratón.'}
               </p>
             </section>
           </div>

@@ -302,6 +302,7 @@ export function Toolbar({
               </div>)}
               <div><dt><kbd>T</kbd></dt><dd>Mover referencia en Calcado</dd></div>
               <div><dt><kbd>Espacio</kbd></dt><dd>Arrastrar lienzo</dd></div>
+              <div><dt>Tablet</dt><dd>Un dedo para dibujar; dos dedos para mover y ampliar el lienzo.</dd></div>
               <div><dt><kbd>+ / −</kbd></dt><dd>Acercar / alejar (también rueda)</dd></div>
               <div><dt><kbd>Clic derecho</kbd></dt><dd>Borrar; en N, quitar pasos</dd></div>
               <div><dt><kbd>Ctrl+Z</kbd></dt><dd>Deshacer</dd></div>
