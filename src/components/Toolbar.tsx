@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import type { GuideStartDirection, NumberingMode, ToolMode } from '../types'
 
 export type InterfaceIconName =
@@ -220,6 +220,8 @@ export function Toolbar({
   onClearGuide,
   isInactive = false,
 }: ToolbarProps) {
+  const colorInputRef = useRef<HTMLInputElement>(null)
+
   return (
     <aside
       id="workspace-tool-panel"
@@ -238,6 +240,7 @@ export function Toolbar({
               <span className="color-value">{color.toUpperCase()}</span>
               <span className="color-picker-label">Editar</span>
               <input
+                ref={colorInputRef}
                 type="color"
                 value={color}
                 onInput={(event) => onColorChange(event.currentTarget.value)}
@@ -253,7 +256,8 @@ export function Toolbar({
                   className={`swatch ${activePaletteSlot === index ? 'is-selected' : ''}`}
                   style={{ backgroundColor: paletteColor }}
                   onClick={() => onPaletteSlotChange(index)}
-                  title={`Espacio ${index + 1}: ${paletteColor.toUpperCase()}`}
+                  onDoubleClick={() => colorInputRef.current?.click()}
+                  title={`Espacio ${index + 1}: ${paletteColor.toUpperCase()}. Doble clic para cambiar el color.`}
                   aria-label={`Espacio ${index + 1}: usar color ${paletteColor}`}
                   aria-pressed={activePaletteSlot === index}
                 >
@@ -266,7 +270,7 @@ export function Toolbar({
                 Haz clic sobre una cuenta para reemplazar todas las cuentas de ese color.
               </p>
             )}
-            <p className="helper-text saved-palette-note">Elige un espacio y pulsa Editar para cambiar su color. Tus 12 colores se conservan al limpiar el diseño.</p>
+            <p className="helper-text saved-palette-note">Haz doble clic en un color para cambiarlo, o elige un espacio y pulsa Editar. Tus 12 colores se conservan al limpiar el diseño.</p>
           </section>
 
           {referenceColorsStatus !== 'idle' && <details className="panel-section reference-palette-details">
